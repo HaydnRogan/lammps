@@ -551,3 +551,21 @@ void FixWallGranRegion::restart(char *buf)
   int n = 0;
   if (!region->restart(buf, n)) motion_resetflag = 1;
 }
+
+/* ----------------------------------------------------------------------
+   return ptr to internal members upon request
+------------------------------------------------------------------------ */
+
+void *FixWallGranRegion::extract(const char *name, int &dim)
+{
+  if (strcmp(name,"region") == 0) {
+    dim = 1;
+    return (void *) region;
+  }
+
+    if (strcmp(name,"model") == 0) {
+    dim = 1;
+    return (void *) model;
+  }
+  return nullptr;
+}

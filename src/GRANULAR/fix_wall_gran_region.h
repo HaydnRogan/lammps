@@ -44,6 +44,8 @@ class FixWallGranRegion : public FixWallGran {
   int size_restart(int) override;
   int maxsize_restart() override;
 
+  void *extract(const char *, int &) override;
+
   class Region *region;
   void update_contacts(int, int);
 

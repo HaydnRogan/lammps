@@ -59,6 +59,7 @@
 #include <string>    // for string class
 #include <utility>
 #include <vector>
+#include <iostream>
 #include <algorithm> 
 
 using namespace LAMMPS_NS;
@@ -742,46 +743,57 @@ void FixRigidAbrade::init_list(int /*id*/, NeighList *ptr)
 
 void FixRigidAbrade::setup_pre_neighbor()
 {
-
   if (reinitflag || !setupflag) {
 
     if (comm->me == 0 && neighbor->style != Neighbor::MULTI)
       error->one(FLERR, "fix rigid/abrade requires hybrid neighbor lists to be enabled through the multi neighbor style.");
 
+    // initial setup of bodies for the initial neighborlist build
+    // Rigid body properties such as the mass, volume, and inertia are calculated from the facets stored in the angles through resetup_bodies_static() 
+    // These angles are made available once the initial neighborlist is built and neighbor->build_topology() is called. 
+    setup_bodies_static();
+  
+  }
+  
+  else
+  pre_neighbor();
+
+}
+
+void FixRigidAbrade::setup_post_neighbor()
+{
+  std::cout << "FixRigidAbrade::setup_post_neighbor()" << std::endl;
+  
+  if ((reinitflag || !setupflag)) {
+    
     // if starting from a restart file then atoms need to be displaced 
     // outwards from their COM to allign with the icosohedra vertices
     if (update->ntimestep > 0) 
       pre_setup_bodies_static();
 
-    // building topology for use in setup_bodies_static()
-    neighbor->build_topology();
-
-    // calcualting initial mass, volume, and inertia of particles from their topology
-    setup_bodies_static();
+    // Calculate rigid body properties such as the mass, volume, and inertia by traversing the now constructed angles neighbor lists 
+    resetup_bodies_static();
     
+    // Calculate the associated areas and normals of each surface atom
     areas_and_normals();
-  }
-
-  else
-    pre_neighbor();
-  
-  if ((reinitflag || !setupflag)) {
-
     
+    // process equalise surface optional keyword
     if (initial_remesh_flag) {
-        // allocating a temporary array for use in equalise_surface()
-        // equalise_surface_array[i][average_surface_area, sum_area_minus_average_sq, variance_normalised, old variance]
-        memory->create(equalise_surface_array, nlocal_body + nghost_body, 4,
-                      "rigid/abrade:equalise_surface_array");
-        //  initialising the old variance to an arbitrarily large value which will be overwritten with the first calcualted variance
-        for (int ibody = 0; ibody < (nlocal_body + nghost_body); ibody++)
-          equalise_surface_array[ibody][3] = BIG;
-    
-        equalise_surface();
-        
-        // cleaning up
-        memory->destroy(equalise_surface_array);
-      }
+
+      // allocating a temporary array for use in equalise_surface()
+      // equalise_surface_array[i][average_surface_area, sum_area_minus_average_sq, variance_normalised, old variance]
+      memory->create(equalise_surface_array, nlocal_body + nghost_body, 4,
+                    "rigid/abrade:equalise_surface_array");
+      
+      //  initialising the old variance to an arbitrarily large value which will be overwritten with the first calcualted variance
+      for (int ibody = 0; ibody < (nlocal_body + nghost_body); ibody++)
+        equalise_surface_array[ibody][3] = BIG;
+
+      equalise_surface();
+      
+      // cleaning up
+      memory->destroy(equalise_surface_array);
+    }
 
     // store the global minimum assocaited surface area to be used as a remeshing threshold moving forward
     if (remesh_flag){
@@ -793,6 +805,7 @@ void FixRigidAbrade::setup_pre_neighbor()
         }
       }
 
+      // Collect the global value
       MPI_Allreduce(&local_min_area_atom, &remesh_area_threshold_atom, 1, MPI_DOUBLE_INT, MPI_MINLOC, world);
      
       // printing remeshing criteria to the user
@@ -802,97 +815,55 @@ void FixRigidAbrade::setup_pre_neighbor()
         check_threshold_flag = 1;
     }
 
-    // optionally storing normals in global coords for visualisation
+    // optionally store normals in global coords for visualisation
     if (global_normals_flag){
       double bodynormals[3], global_normals[3];  
       for (int i = 0; i < atom->nlocal; i++) {
       
         // Checking that atom i is in a rigid body
-      if (atom2body[i] < 0) continue;
+        if (atom2body[i] < 0) continue;
 
-      bodynormals[0] = vertexdata[i][0];
-      bodynormals[1] = vertexdata[i][1];
-      bodynormals[2] = vertexdata[i][2];
+        bodynormals[0] = vertexdata[i][0];
+        bodynormals[1] = vertexdata[i][1];
+        bodynormals[2] = vertexdata[i][2];
 
-      Body *b = &body[atom2body[i]];
-      MathExtra::matvec(b->ex_space, b->ey_space, b->ez_space, bodynormals, global_normals);
+        Body *b = &body[atom2body[i]];
+        MathExtra::matvec(b->ex_space, b->ey_space, b->ez_space, bodynormals, global_normals);
 
-      vertexdata[i][8]  = global_normals[0];
-      vertexdata[i][9]  = global_normals[1];
-      vertexdata[i][10] = global_normals[2];
+        vertexdata[i][8]  = global_normals[0];
+        vertexdata[i][9]  = global_normals[1];
+        vertexdata[i][10] = global_normals[2];
+      }
     }
-    }
 
-    // Setting up rigid body dynamics with respect to the new topology (maybe overwritten by readfile for bodies in the .rigid restart file)
-      setup_bodies_dynamic();
+    // Setting up rigid body dynamics with respect to the topology (maybe overwritten by readfile for bodies in the .rigid restart file)
+    setup_bodies_dynamic();
 
-    // offsetting atoms towards the COM such that the tetrahedra vertices lay on the surface of the particle
+    // Optionally read in a fix specific restart file which preserves some per-atom and per-body between runs (this will overwrite the initial values calculated from resetup_bodies_static())
+    if (inpfile) 
+      readfile();
+
+    // optionally offsetting atoms towards the COM such that the tetrahedra vertices lay on the surface of the particle
     for (int ibody = 0; ibody < (nlocal_body + nghost_body); ibody++) body[ibody].body_offset_flag = 1;
     offset_vertices_inwards();
     for (int ibody = 0; ibody < (nlocal_body + nghost_body); ibody++) body[ibody].body_offset_flag = 0;
-
-    // If starting from a restart file neighbor information must be reset for atoms that
-    // have been pushed outside of the simulatoion cell prior to building lists  is required 
-    // to ensure stability when using restart files with bodies straddling periodic boundaries
-
-    // Additionally after offsetting atoms inwards, neighbor information must also be reset for similar reasons. 
-        
-    // Getting a list of fixes so their pre_neighbor() and post_neighbor() functions can also be called
-    std::vector<Fix *> fix_list = modify->get_fix_list();
-    // rebuilding neighbor lists
-    for (auto &fix_i : fix_list) fix_i->pre_exchange();
-
-    if (domain->triclinic) domain->x2lamda(atom->nlocal+atom->nghost);
-    
-    domain->pbc();
-    domain->reset_box();
-    comm->setup();
-    neighbor->setup_bins();
-    comm->exchange();
-    comm->borders();
-    
-    if (domain->triclinic) domain->lamda2x(atom->nlocal+atom->nghost);
-
-    for (auto &fix_i : fix_list) fix_i->pre_neighbor();
-    neighbor->build(1);
-    for (auto &fix_i : fix_list) fix_i->post_neighbor();
-
-    neighbor->ago = 0;
-    
-    // Optionally read in a fix specific restart file which preserves some per-atom and per-body between runs
-    if (inpfile) 
-      readfile();
     
     // printing body vcm and acm
-    for (int ibody = 0; ibody < 1; ibody++) {
+    for (int ibody = 0; ibody < nlocal_body; ibody++) {
       utils::logmesg(lmp, "fix rigid/abrade: Initial rigid body properties for body id {}, inertia: ({:.4f}, {:.4f}, {:.4f}), volume: {:.4f}, density: {:.4f}, mass: {:.4f}, xcm: ({:.4f}, {:.4f}, {:.4f})\n", atom->tag[body[ibody].ilocal], body[ibody].inertia[0], body[ibody].inertia[1], body[ibody].inertia[2], body[ibody].volume, body[ibody].density, body[ibody].mass, body[ibody].xcm[0], body[ibody].xcm[1], body[ibody].xcm[2]);
       utils::logmesg(lmp, "fix rigid/abrade: Initial dynamics for body id {}, vcm: ({:.4f}, {:.4f}, {:.4f}), acm: ({:.4f}, {:.4f}, {:.4f})\n", atom->tag[body[ibody].ilocal], body[ibody].vcm[0], body[ibody].vcm[1], body[ibody].vcm[2], body[ibody].angmom[0], body[ibody].angmom[1], body[ibody].angmom[2]);
     }
 
-  }
-}
-
-void FixRigidAbrade::setup_post_neighbor()
-{
-  
-  if ((reinitflag || !setupflag)) {
-
-
-
-
-
-
-
     // Rebuilding neighbor list following equalise_surface() at the end of the timestep
     if (remesh_flag) end_of_step();
-    
+
+    // Reset abraded flags
     for (int ibody; ibody < (nlocal_body + nghost_body); ibody++) body[ibody].abraded_flag = 0;
     proc_abraded_flag = 0;
 
+    // Mark that the setup has finished
+    setupflag = 1;
   }
-
-  setupflag = 1;
-
 }
 
 /* ----------------------------------------------------------------------
@@ -3001,6 +2972,7 @@ void FixRigidAbrade::end_of_step()
     int remove_count_all = 0;
     MPI_Allreduce(&removed_count, &remove_count_all, 1, MPI_LMP_BIGINT, MPI_SUM, world);
 
+    // Print the initial amount of atoms remeshed under the equalise keyword
     if (me ==0 && initial_remesh_flag)
       utils::logmesg(lmp, "fix rigid/abrade: {} atoms remeshed on timestep {}\n", remove_count_all, update->ntimestep);
 
@@ -3813,20 +3785,17 @@ comm->forward_comm(this, 3);
 }
 
 /* ----------------------------------------------------------------------
-   one-time initialization of rigid body attributes
-   sets extended flags, masstotal, center-of-mass (Note: support for non-spherical rotational extended atoms has been removed for fix rigid/abrade)
-   sets Cartesian and diagonalized inertia tensor
-   sets body image flags
-   Rigid body properties are set by contructing tetrahedra about facets (defined by the angles) with reference to F. Tonon, Explicit Exact Formulas for the 3-D Tetrahedron Inertia Tensor in Terms of its Vertex Coordinates, J. Math. Stat. 1 (2004). doi:10.3844/jmssp.2005.8.11
-------------------------------------------------------------------------- */
+   One-time initialization of rigid bodies in preparation for the initial neighborlist build 
+   Rigid body properties are later set by contructing tetrahedra about facets (defined by the angles) with reference to F. Tonon, Explicit Exact Formulas for the 3-D Tetrahedron Inertia Tensor in Terms of its Vertex Coordinates, J. Math. Stat. 1 (2004). doi:10.3844/jmssp.2005.8.11
+   This is completed by resetup_bodies_static() following the building of the angles neighbor list in setup_post_neighbor()
+   
+   (Note: support for non-spherical rotational extended atoms has been removed for fix rigid/abrade)
+   ------------------------------------------------------------------------- */
 
 void FixRigidAbrade::setup_bodies_static()
 {
 
   int i, ibody;
-
-  extended = 0;
-
   AtomVecEllipsoid::Bonus *ebonus;
   if (avec_ellipsoid) ebonus = avec_ellipsoid->bonus;
   AtomVecLine::Bonus *lbonus;
@@ -3835,14 +3804,14 @@ void FixRigidAbrade::setup_bodies_static()
   if (avec_tri) tbonus = avec_tri->bonus;
   double **mu = atom->mu;
   double *radius = atom->radius;
-  double *rmass = atom->rmass;
-  double *mass = atom->mass;
   int *ellipsoid = atom->ellipsoid;
   int *line = atom->line;
   int *tri = atom->tri;
   int *type = atom->type;
   int nlocal = atom->nlocal;
-
+  
+  extended = 0;
+  
   if (atom->radius_flag) {
     int flag = 0;
     for (i = 0; i < nlocal; i++) {
@@ -3902,14 +3871,11 @@ void FixRigidAbrade::setup_bodies_static()
   comm->forward_comm(this);
   reset_atom2body();
 
-  // compute mass & center-of-mass of each rigid body
-  double **x = atom->x;
-
-  double *xcm;
-  double *xgc;
+  // zero body properties (to be setup using the angles in resetup_bodies_static() following the building of the topology neighborlists)
+  double *xcm, *xgc, *vcm, *angmom;
 
   for (ibody = 0; ibody < nlocal_body + nghost_body; ibody++) {
-
+    
     xcm = body[ibody].xcm;
     xgc = body[ibody].xgc;
     xcm[0] = xcm[1] = xcm[2] = 0.0;
@@ -3924,600 +3890,36 @@ void FixRigidAbrade::setup_bodies_static()
     body[ibody].density = density;
     body[ibody].natoms = 0;
 
-    // Initally setting all bodies to have been abraded at t = 0 so that they are correctly processed during setup_bodies_static
-    body[ibody].abraded_flag = 1;
-    body[ibody].remesh_atom = 0;
-  }
-  proc_abraded_flag = 1;
-  
-  double massone;
-
-  // Cycling through the local atoms and storing their unwrapped coordinates.
-  // Additionally, set increment the number of atoms in their respective body
-  for (i = 0; i < nlocal; i++) {
-    if (atom2body[i] < 0) continue;
-    // Calculated unwrapped coords for all atoms in bodies
-    domain->unmap(x[i], xcmimage[i], unwrap[i]);
-
-    Body *b = &body[atom2body[i]];
-    b->natoms++;
-  }
-
-  int nanglelist = neighbor->nanglelist;
-  int **anglelist = neighbor->anglelist;
-
-  int i1, i2, i3;
-
-  // communicate unwrapped position of owned atoms to ghost atoms
-  commflag = UNWRAP;
-  comm->forward_comm(this, 3);
-
-  // Calculating body volume, mass and COM from constituent tetrahedra
-  double inverse_24 = 1.0/24.0;
-  double inverse_6 = 1.0/6.0;
-
-  for (int n = 0; n < nanglelist; n++) {
-    if (atom2body[anglelist[n][0]] < 0) continue;
-
-    Body *b = &body[atom2body[anglelist[n][0]]];
-
-    // Storing the three atoms in each angle
-    i1 = anglelist[n][0];
-    i2 = anglelist[n][1];
-    i3 = anglelist[n][2];
-
-    xcm = b->xcm;
-    xgc = b->xgc;
-
-    b->volume += ((((unwrap[i2][1] - unwrap[i1][1]) * (unwrap[i3][2] - unwrap[i1][2])) -
-                   ((unwrap[i3][1] - unwrap[i1][1]) * (unwrap[i2][2] - unwrap[i1][2]))) *
-                  ((unwrap[i1][0] + unwrap[i2][0]) + unwrap[i3][0])) * inverse_6;
-
-    xcm[0] +=
-        ((((unwrap[i2][1] - unwrap[i1][1]) * (unwrap[i3][2] - unwrap[i1][2])) -
-          ((unwrap[i3][1] - unwrap[i1][1]) * (unwrap[i2][2] - unwrap[i1][2]))) *
-         (((unwrap[i1][0] * unwrap[i1][0]) + unwrap[i2][0] * (unwrap[i1][0] + unwrap[i2][0])) +
-          unwrap[i3][0] * ((unwrap[i1][0] + unwrap[i2][0]) + unwrap[i3][0]))) * inverse_24;
-    xcm[1] +=
-        ((((unwrap[i3][0] - unwrap[i1][0]) * (unwrap[i2][2] - unwrap[i1][2])) -
-          ((unwrap[i2][0] - unwrap[i1][0]) * (unwrap[i3][2] - unwrap[i1][2]))) *
-         (((unwrap[i1][1] * unwrap[i1][1]) + unwrap[i2][1] * (unwrap[i1][1] + unwrap[i2][1])) +
-          unwrap[i3][1] * ((unwrap[i1][1] + unwrap[i2][1]) + unwrap[i3][1]))) * inverse_24;
-    xcm[2] +=
-        ((((unwrap[i2][0] - unwrap[i1][0]) * (unwrap[i3][1] - unwrap[i1][1])) -
-          ((unwrap[i3][0] - unwrap[i1][0]) * (unwrap[i2][1] - unwrap[i1][1]))) *
-         (((unwrap[i1][2] * unwrap[i1][2]) + unwrap[i2][2] * (unwrap[i1][2] + unwrap[i2][2])) +
-          unwrap[i3][2] * ((unwrap[i1][2] + unwrap[i2][2]) + unwrap[i3][2]))) * inverse_24;
-    xgc[0] +=
-        ((((unwrap[i2][1] - unwrap[i1][1]) * (unwrap[i3][2] - unwrap[i1][2])) -
-          ((unwrap[i3][1] - unwrap[i1][1]) * (unwrap[i2][2] - unwrap[i1][2]))) *
-         (((unwrap[i1][0] * unwrap[i1][0]) + unwrap[i2][0] * (unwrap[i1][0] + unwrap[i2][0])) +
-          unwrap[i3][0] * ((unwrap[i1][0] + unwrap[i2][0]) + unwrap[i3][0]))) * inverse_24;
-    xgc[1] +=
-        ((((unwrap[i3][0] - unwrap[i1][0]) * (unwrap[i2][2] - unwrap[i1][2])) -
-          ((unwrap[i2][0] - unwrap[i1][0]) * (unwrap[i3][2] - unwrap[i1][2]))) *
-         (((unwrap[i1][1] * unwrap[i1][1]) + unwrap[i2][1] * (unwrap[i1][1] + unwrap[i2][1])) +
-          unwrap[i3][1] * ((unwrap[i1][1] + unwrap[i2][1]) + unwrap[i3][1]))) * inverse_24;
-    xgc[2] +=
-        ((((unwrap[i2][0] - unwrap[i1][0]) * (unwrap[i3][1] - unwrap[i1][1])) -
-          ((unwrap[i3][0] - unwrap[i1][0]) * (unwrap[i2][1] - unwrap[i1][1]))) *
-         (((unwrap[i1][2] * unwrap[i1][2]) + unwrap[i2][2] * (unwrap[i1][2] + unwrap[i2][2])) +
-          unwrap[i3][2] * ((unwrap[i1][2] + unwrap[i2][2]) + unwrap[i3][2]))) * inverse_24;
-  }
-
-  // reverse communicate xcm, mass of all bodies
-  commflag = XCM_MASS;
-  comm->reverse_comm(this, 9);
-
-  double inverse_volume;
-
-  for (ibody = 0; ibody < nlocal_body; ibody++) {
-
-    xcm = body[ibody].xcm;
-    xgc = body[ibody].xgc;
-
-    // Setting each bodies' COM
-    inverse_volume = 1.0 /  body[ibody].volume;
-    xcm[0] *= inverse_volume;
-    xcm[1] *= inverse_volume;
-    xcm[2] *= inverse_volume;
-    xgc[0] *= inverse_volume;
-    xgc[1] *= inverse_volume;
-    xgc[2] *= inverse_volume;
-
-    // Positioning the owning atom at the COM
-    unwrap[body[ibody].ilocal][0] = body[ibody].xcm[0];
-    unwrap[body[ibody].ilocal][1] = body[ibody].xcm[1];
-    unwrap[body[ibody].ilocal][2] = body[ibody].xcm[2];
-    x[body[ibody].ilocal][0] = body[ibody].xcm[0];
-    x[body[ibody].ilocal][1] = body[ibody].xcm[1];
-    x[body[ibody].ilocal][2] = body[ibody].xcm[2];
-
-    // Setting the mass of each body
-    body[ibody].mass = body[ibody].volume * density;
-    body[ibody].initial_volume = body[ibody].volume;
-  }
-  
-  double *vcm, *angmom;
-
-  for (ibody = 0; ibody < nlocal_body; ibody++) {
     vcm = body[ibody].vcm;
     vcm[0] = vcm[1] = vcm[2] = 0.0;
     angmom = body[ibody].angmom;
     angmom[0] = angmom[1] = angmom[2] = 0.0;
+
+    // Initally setting all bodies to have been abraded at t = 0 so that they are correctly communicated and processed during setup_bodies_static() and resetup_bodies_static()
+    body[ibody].abraded_flag = 1;
+    body[ibody].remesh_atom = 0;
   }
+  proc_abraded_flag = 1;
+
+  // Increment the number of atoms in each body
+  for (i = 0; i < nlocal; i++) {
+    if (atom2body[i] < 0) continue;
+    Body *b = &body[atom2body[i]];
+    b->natoms++;
+  }
+
+  // reverse communicate xcm, vol, natoms of all bodies
+  commflag = XCM_VOL;
+  comm->reverse_comm(this, 8);
 
   // set rigid body image flags to default values
-
   for (ibody = 0; ibody < nlocal_body; ibody++)
     body[ibody].image = ((imageint) IMGMAX << IMG2BITS) | ((imageint) IMGMAX << IMGBITS) | IMGMAX;
-
-  // remap the xcm of each body back into simulation box
-  //   and reset body and atom xcmimage flags via pre_neighbor()
-
-  pre_neighbor();
-
-  // recalculating unwrapped coordinates of all atoms in bodies since have reset xcmimage flags
-  for (i = 0; i < nlocal; i++) {
-
-    if (atom2body[i] < 0) continue;
-
-    // Only processing properties relevant to bodies which have abraded and changed shape
-    if (!body[atom2body[i]].abraded_flag) continue;
-    
-    domain->unmap(x[i], xcmimage[i], unwrap[i]);
-  
-  }
-
-
-  commflag = UNWRAP;
-  comm->forward_comm(this, 3);
-
-  // compute 6 moments of inertia of each body in Cartesian reference frame
-  // dx,dy,dz = coords relative to center-of-mass
-  // symmetric 3x3 inertia tensor stored in Voigt notation as 6-vector
-
-  // also place owning atom at COM following the mapping of XCM in pre_neighbor
-
-  memory->create(itensor, nlocal_body + nghost_body, 6, "rigid/abrade:itensor");
-  for (ibody = 0; ibody < nlocal_body + nghost_body; ibody++) {
-
-    for (i = 0; i < 6; i++) itensor[ibody][i] = 0.0;
-
-    // Positioning the owning atom at the COM
-    x[body[ibody].ilocal][0] = body[ibody].xcm[0];
-    x[body[ibody].ilocal][1] = body[ibody].xcm[1];
-    x[body[ibody].ilocal][2] = body[ibody].xcm[2];
-
-        // Positioning the owning atom at the COM
-    unwrap[body[ibody].ilocal][0] = body[ibody].xcm[0];
-    unwrap[body[ibody].ilocal][1] = body[ibody].xcm[1];
-    unwrap[body[ibody].ilocal][2] = body[ibody].xcm[2];
-  }
-
-  double dx, dy, dz;
-  double *inertia;
-
-  for (int n = 0; n < nanglelist; n++) {
-    if (atom2body[anglelist[n][0]] < 0) continue;
-    Body *b = &body[atom2body[anglelist[n][0]]];
-
-    // Storing the three atoms in each angle
-    i1 = anglelist[n][0];
-    i2 = anglelist[n][1];
-    i3 = anglelist[n][2];
-
-    inertia = itensor[atom2body[anglelist[n][0]]];
-    inertia[0] += (((unwrap[i2][1] - unwrap[i1][1]) * (unwrap[i3][2] - unwrap[i1][2])) -
-                   ((unwrap[i3][1] - unwrap[i1][1]) * (unwrap[i2][2] - unwrap[i1][2]))) *
-        (unwrap[i1][0] * (unwrap[i1][0] * unwrap[i1][0]) +
-         unwrap[i2][0] *
-             ((unwrap[i1][0] * unwrap[i1][0]) + unwrap[i2][0] * (unwrap[i1][0] + unwrap[i2][0])) +
-         unwrap[i3][0] *
-             (((unwrap[i1][0] * unwrap[i1][0]) + unwrap[i2][0] * (unwrap[i1][0] + unwrap[i2][0])) +
-              unwrap[i3][0] * ((unwrap[i1][0] + unwrap[i2][0]) + unwrap[i3][0])));
-    inertia[1] += (((unwrap[i3][0] - unwrap[i1][0]) * (unwrap[i2][2] - unwrap[i1][2])) -
-                   ((unwrap[i2][0] - unwrap[i1][0]) * (unwrap[i3][2] - unwrap[i1][2]))) *
-        (unwrap[i1][1] * (unwrap[i1][1] * unwrap[i1][1]) +
-         unwrap[i2][1] *
-             ((unwrap[i1][1] * unwrap[i1][1]) + unwrap[i2][1] * (unwrap[i1][1] + unwrap[i2][1])) +
-         unwrap[i3][1] *
-             (((unwrap[i1][1] * unwrap[i1][1]) + unwrap[i2][1] * (unwrap[i1][1] + unwrap[i2][1])) +
-              unwrap[i3][1] * ((unwrap[i1][1] + unwrap[i2][1]) + unwrap[i3][1])));
-    inertia[2] += (((unwrap[i2][0] - unwrap[i1][0]) * (unwrap[i3][1] - unwrap[i1][1])) -
-                   ((unwrap[i3][0] - unwrap[i1][0]) * (unwrap[i2][1] - unwrap[i1][1]))) *
-        (unwrap[i1][2] * (unwrap[i1][2] * unwrap[i1][2]) +
-         unwrap[i2][2] *
-             ((unwrap[i1][2] * unwrap[i1][2]) + unwrap[i2][2] * (unwrap[i1][2] + unwrap[i2][2])) +
-         unwrap[i3][2] *
-             (((unwrap[i1][2] * unwrap[i1][2]) + unwrap[i2][2] * (unwrap[i1][2] + unwrap[i2][2])) +
-              unwrap[i3][2] * ((unwrap[i1][2] + unwrap[i2][2]) + unwrap[i3][2])));
-    inertia[3] += (((unwrap[i2][1] - unwrap[i1][1]) * (unwrap[i3][2] - unwrap[i1][2])) -
-                   ((unwrap[i3][1] - unwrap[i1][1]) * (unwrap[i2][2] - unwrap[i1][2]))) *
-        (unwrap[i1][1] *
-             ((((unwrap[i1][0] * unwrap[i1][0]) + unwrap[i2][0] * (unwrap[i1][0] + unwrap[i2][0])) +
-               unwrap[i3][0] * ((unwrap[i1][0] + unwrap[i2][0]) + unwrap[i3][0])) +
-              unwrap[i1][0] * (((unwrap[i1][0] + unwrap[i2][0]) + unwrap[i3][0]) + unwrap[i1][0])) +
-         unwrap[i2][1] *
-             ((((unwrap[i1][0] * unwrap[i1][0]) + unwrap[i2][0] * (unwrap[i1][0] + unwrap[i2][0])) +
-               unwrap[i3][0] * ((unwrap[i1][0] + unwrap[i2][0]) + unwrap[i3][0])) +
-              unwrap[i2][0] * (((unwrap[i1][0] + unwrap[i2][0]) + unwrap[i3][0]) + unwrap[i2][0])) +
-         unwrap[i3][1] *
-             ((((unwrap[i1][0] * unwrap[i1][0]) + unwrap[i2][0] * (unwrap[i1][0] + unwrap[i2][0])) +
-               unwrap[i3][0] * ((unwrap[i1][0] + unwrap[i2][0]) + unwrap[i3][0])) +
-              unwrap[i3][0] * (((unwrap[i1][0] + unwrap[i2][0]) + unwrap[i3][0]) + unwrap[i3][0])));
-    inertia[4] += (((unwrap[i3][0] - unwrap[i1][0]) * (unwrap[i2][2] - unwrap[i1][2])) -
-                   ((unwrap[i2][0] - unwrap[i1][0]) * (unwrap[i3][2] - unwrap[i1][2]))) *
-        (unwrap[i1][2] *
-             ((((unwrap[i1][1] * unwrap[i1][1]) + unwrap[i2][1] * (unwrap[i1][1] + unwrap[i2][1])) +
-               unwrap[i3][1] * ((unwrap[i1][1] + unwrap[i2][1]) + unwrap[i3][1])) +
-              unwrap[i1][1] * (((unwrap[i1][1] + unwrap[i2][1]) + unwrap[i3][1]) + unwrap[i1][1])) +
-         unwrap[i2][2] *
-             ((((unwrap[i1][1] * unwrap[i1][1]) + unwrap[i2][1] * (unwrap[i1][1] + unwrap[i2][1])) +
-               unwrap[i3][1] * ((unwrap[i1][1] + unwrap[i2][1]) + unwrap[i3][1])) +
-              unwrap[i2][1] * (((unwrap[i1][1] + unwrap[i2][1]) + unwrap[i3][1]) + unwrap[i2][1])) +
-         unwrap[i3][2] *
-             ((((unwrap[i1][1] * unwrap[i1][1]) + unwrap[i2][1] * (unwrap[i1][1] + unwrap[i2][1])) +
-               unwrap[i3][1] * ((unwrap[i1][1] + unwrap[i2][1]) + unwrap[i3][1])) +
-              unwrap[i3][1] * (((unwrap[i1][1] + unwrap[i2][1]) + unwrap[i3][1]) + unwrap[i3][1])));
-    inertia[5] += (((unwrap[i2][0] - unwrap[i1][0]) * (unwrap[i3][1] - unwrap[i1][1])) -
-                   ((unwrap[i3][0] - unwrap[i1][0]) * (unwrap[i2][1] - unwrap[i1][1]))) *
-        (unwrap[i1][0] *
-             ((((unwrap[i1][2] * unwrap[i1][2]) + unwrap[i2][2] * (unwrap[i1][2] + unwrap[i2][2])) +
-               unwrap[i3][2] * ((unwrap[i1][2] + unwrap[i2][2]) + unwrap[i3][2])) +
-              unwrap[i1][2] * (((unwrap[i1][2] + unwrap[i2][2]) + unwrap[i3][2]) + unwrap[i1][2])) +
-         unwrap[i2][0] *
-             ((((unwrap[i1][2] * unwrap[i1][2]) + unwrap[i2][2] * (unwrap[i1][2] + unwrap[i2][2])) +
-               unwrap[i3][2] * ((unwrap[i1][2] + unwrap[i2][2]) + unwrap[i3][2])) +
-              unwrap[i2][2] * (((unwrap[i1][2] + unwrap[i2][2]) + unwrap[i3][2]) + unwrap[i2][2])) +
-         unwrap[i3][0] *
-             ((((unwrap[i1][2] * unwrap[i1][2]) + unwrap[i2][2] * (unwrap[i1][2] + unwrap[i2][2])) +
-               unwrap[i3][2] * ((unwrap[i1][2] + unwrap[i2][2]) + unwrap[i3][2])) +
-              unwrap[i3][2] * (((unwrap[i1][2] + unwrap[i2][2]) + unwrap[i3][2]) + unwrap[i3][2])));
-  }
-
-  // reverse communicate inertia tensor of all bodies
-
-  commflag = ITENSOR;
-  comm->reverse_comm(this, 6);
-
-
-  // diagonalize inertia tensor for each body via Jacobi rotations
-  // inertia = 3 eigenvalues = principal moments of inertia
-  // evectors and exzy_space = 3 evectors = principal axes of rigid body
-
-  int ierror;
-  double cross[3];
-  double tensor[3][3], evectors[3][3];
-  double *ex, *ey, *ez;
-
-  double inverse_60 = 1.0 / 60.0;
-  double inverse_120 = 1.0 / 120.0;
-
-  for (ibody = 0; ibody < nlocal_body; ibody++) {
-
-    tensor[0][0] = body[ibody].density *
-        (((itensor[ibody][1] + itensor[ibody][2]) * inverse_60) -
-         body[ibody].volume *
-             (body[ibody].xcm[1] * body[ibody].xcm[1] + body[ibody].xcm[2] * body[ibody].xcm[2]));
-    tensor[1][1] = body[ibody].density *
-        (((itensor[ibody][0] + itensor[ibody][2]) * inverse_60) -
-         body[ibody].volume *
-             (body[ibody].xcm[2] * body[ibody].xcm[2] + body[ibody].xcm[0] * body[ibody].xcm[0]));
-    tensor[2][2] = body[ibody].density *
-        (((itensor[ibody][0] + itensor[ibody][1]) * inverse_60) -
-         body[ibody].volume *
-             (body[ibody].xcm[0] * body[ibody].xcm[0] + body[ibody].xcm[1] * body[ibody].xcm[1]));
-
-    tensor[0][1] = tensor[1][0] = -body[ibody].density *
-        ((itensor[ibody][3] * inverse_120 -
-          body[ibody].volume * body[ibody].xcm[0] * body[ibody].xcm[1]));
-    tensor[1][2] = tensor[2][1] = -body[ibody].density *
-        ((itensor[ibody][4] * inverse_120 -
-          body[ibody].volume * body[ibody].xcm[1] * body[ibody].xcm[2]));
-    tensor[0][2] = tensor[2][0] = -body[ibody].density *
-        ((itensor[ibody][5] * inverse_120 -
-          body[ibody].volume * body[ibody].xcm[2] * body[ibody].xcm[0]));
-
-    inertia = body[ibody].inertia;
-    ierror = MathEigen::jacobi3(tensor, inertia, evectors);
-    if (ierror) error->all(FLERR, "Insufficient Jacobi rotations for rigid body");
-
-    ex = body[ibody].ex_space;
-    ex[0] = evectors[0][0];
-    ex[1] = evectors[1][0];
-    ex[2] = evectors[2][0];
-    ey = body[ibody].ey_space;
-    ey[0] = evectors[0][1];
-    ey[1] = evectors[1][1];
-    ey[2] = evectors[2][1];
-    ez = body[ibody].ez_space;
-    ez[0] = evectors[0][2];
-    ez[1] = evectors[1][2];
-    ez[2] = evectors[2][2];
-
-    // if any principal moment < scaled EPSILON, set to 0.0
-
-    double max;
-    max = MAX(inertia[0], inertia[1]);
-    max = MAX(max, inertia[2]);
-
-    if (inertia[0] < EPSILON * max) inertia[0] = 0.0;
-    if (inertia[1] < EPSILON * max) inertia[1] = 0.0;
-    if (inertia[2] < EPSILON * max) inertia[2] = 0.0;
-
-    // enforce 3 evectors as a right-handed coordinate system
-    // flip 3rd vector if needed
-
-    MathExtra::cross3(ex, ey, cross);
-    if (MathExtra::dot3(cross, ez) < 0.0) MathExtra::negate3(ez);
-
-    // create initial quaternion
-
-    MathExtra::exyz_to_q(ex, ey, ez, body[ibody].quat);
-
-    // convert geometric center position to principal axis coordinates
-    // xcm is wrapped, but xgc is not initially
-    xcm = body[ibody].xcm;
-    xgc = body[ibody].xgc;
-    double delta[3];
-    MathExtra::sub3(xgc, xcm, delta);
-    domain->minimum_image_big(FLERR, delta);
-    MathExtra::transpose_matvec(ex, ey, ez, delta, body[ibody].xgc_body);
-    MathExtra::add3(xcm, delta, xgc);
-  }
 
   // forward communicate updated info of all bodies
   commflag = INITIAL;
   comm->forward_comm(this, 29);
 
-  // displace = initial atom coords in basis of principal axes
-  // set displace = 0.0 for atoms not in any rigid body
-
-
-  // Also set the atom masses to sum to the mass of the body
-
-  double qc[4], delta[3];
-  double *quatatom;
-  double theta_body;
-
-  commflag = MASS_NATOMS;
-  comm->forward_comm(this, 2);
-
-  for (i = 0; i < nlocal; i++) {
-    if (atom2body[i] < 0) {
-      displace[i][0] = displace[i][1] = displace[i][2] = 0.0;
-      continue;
-    }
-
-    Body *b = &body[atom2body[i]];
-
-    if (rmass) {
-      rmass[i] = b->mass/static_cast<double>(b->natoms);
-    }
-    else {
-      mass[i] = b->mass/static_cast<double>(b->natoms);
-    }
-    
-  
-    xcm = b->xcm;
-    delta[0] = unwrap[i][0] - xcm[0];
-    delta[1] = unwrap[i][1] - xcm[1];
-    delta[2] = unwrap[i][2] - xcm[2];
-
-    MathExtra::transpose_matvec(b->ex_space, b->ey_space, b->ez_space, delta, displace[i]);
-
-  }
-  
-  // also set the mass for the ghost atoms since the information should be available (this prevents excess communication)
-  for (int i = nlocal; i < (nlocal + atom->nghost); i++){
-    if (atom2body[i] < 0) 
-      continue;
-    
-    Body *b = &body[atom2body[i]];
-    
-    if (rmass) {
-      rmass[i] = b->mass/static_cast<double>(b->natoms);
-    }
-    else {
-      mass[i] = b->mass/static_cast<double>(b->natoms);
-    }
-    
-  }
-
-  // forward communicate displace[i] to ghost atoms to test for valid principal moments & axes
-  commflag = DISPLACE;
-  comm->forward_comm(this, 3);
-
-  // test for valid principal moments & axes
-  // recompute moments of inertia around new axes
-  // 3 diagonal moments should equal principal moments
-  // 3 off-diagonal moments should be 0.0
-
-
-  for (ibody = 0; ibody < nlocal_body + nghost_body; ibody++)
-    for (i = 0; i < 6; i++) itensor[ibody][i] = 0.0;
-
-  double tetra_volume;
-
-  for (int n = 0; n < nanglelist; n++) {
-    if (atom2body[anglelist[n][0]] < 0) continue;
-
-    i1 = anglelist[n][0];
-    i2 = anglelist[n][1];
-    i3 = anglelist[n][2];
-
-    inertia = itensor[atom2body[anglelist[n][0]]];
-
-    inertia[0] += body[atom2body[anglelist[n][0]]].density *
-        ((((((displace[i3][0] - displace[i1][0]) * (displace[i2][2] - displace[i1][2])) -
-            ((displace[i2][0] - displace[i1][0]) * (displace[i3][2] - displace[i1][2]))) *
-               (displace[i1][1] * (displace[i1][1] * displace[i1][1]) +
-                displace[i2][1] *
-                    ((displace[i1][1] * displace[i1][1]) +
-                     displace[i2][1] * (displace[i1][1] + displace[i2][1])) +
-                displace[i3][1] *
-                    (((displace[i1][1] * displace[i1][1]) +
-                      displace[i2][1] * (displace[i1][1] + displace[i2][1])) +
-                     displace[i3][1] * ((displace[i1][1] + displace[i2][1]) + displace[i3][1]))) +
-           (((displace[i2][0] - displace[i1][0]) * (displace[i3][1] - displace[i1][1])) -
-            ((displace[i3][0] - displace[i1][0]) * (displace[i2][1] - displace[i1][1]))) *
-               (displace[i1][2] * (displace[i1][2] * displace[i1][2]) +
-                displace[i2][2] *
-                    ((displace[i1][2] * displace[i1][2]) +
-                     displace[i2][2] * (displace[i1][2] + displace[i2][2])) +
-                displace[i3][2] *
-                    (((displace[i1][2] * displace[i1][2]) +
-                      displace[i2][2] * (displace[i1][2] + displace[i2][2])) +
-                     displace[i3][2] * ((displace[i1][2] + displace[i2][2]) + displace[i3][2])))) * inverse_60));
-    inertia[1] += body[atom2body[anglelist[n][0]]].density *
-        ((((((displace[i2][1] - displace[i1][1]) * (displace[i3][2] - displace[i1][2])) -
-            ((displace[i3][1] - displace[i1][1]) * (displace[i2][2] - displace[i1][2]))) *
-               (displace[i1][0] * (displace[i1][0] * displace[i1][0]) +
-                displace[i2][0] *
-                    ((displace[i1][0] * displace[i1][0]) +
-                     displace[i2][0] * (displace[i1][0] + displace[i2][0])) +
-                displace[i3][0] *
-                    (((displace[i1][0] * displace[i1][0]) +
-                      displace[i2][0] * (displace[i1][0] + displace[i2][0])) +
-                     displace[i3][0] * ((displace[i1][0] + displace[i2][0]) + displace[i3][0]))) +
-           (((displace[i2][0] - displace[i1][0]) * (displace[i3][1] - displace[i1][1])) -
-            ((displace[i3][0] - displace[i1][0]) * (displace[i2][1] - displace[i1][1]))) *
-               (displace[i1][2] * (displace[i1][2] * displace[i1][2]) +
-                displace[i2][2] *
-                    ((displace[i1][2] * displace[i1][2]) +
-                     displace[i2][2] * (displace[i1][2] + displace[i2][2])) +
-                displace[i3][2] *
-                    (((displace[i1][2] * displace[i1][2]) +
-                      displace[i2][2] * (displace[i1][2] + displace[i2][2])) +
-                     displace[i3][2] * ((displace[i1][2] + displace[i2][2]) + displace[i3][2])))) * inverse_60));
-    inertia[2] += body[atom2body[anglelist[n][0]]].density *
-        ((((((displace[i2][1] - displace[i1][1]) * (displace[i3][2] - displace[i1][2])) -
-            ((displace[i3][1] - displace[i1][1]) * (displace[i2][2] - displace[i1][2]))) *
-               (displace[i1][0] * (displace[i1][0] * displace[i1][0]) +
-                displace[i2][0] *
-                    ((displace[i1][0] * displace[i1][0]) +
-                     displace[i2][0] * (displace[i1][0] + displace[i2][0])) +
-                displace[i3][0] *
-                    (((displace[i1][0] * displace[i1][0]) +
-                      displace[i2][0] * (displace[i1][0] + displace[i2][0])) +
-                     displace[i3][0] * ((displace[i1][0] + displace[i2][0]) + displace[i3][0]))) +
-           (((displace[i3][0] - displace[i1][0]) * (displace[i2][2] - displace[i1][2])) -
-            ((displace[i2][0] - displace[i1][0]) * (displace[i3][2] - displace[i1][2]))) *
-               (displace[i1][1] * (displace[i1][1] * displace[i1][1]) +
-                displace[i2][1] *
-                    ((displace[i1][1] * displace[i1][1]) +
-                     displace[i2][1] * (displace[i1][1] + displace[i2][1])) +
-                displace[i3][1] *
-                    (((displace[i1][1] * displace[i1][1]) +
-                      displace[i2][1] * (displace[i1][1] + displace[i2][1])) +
-                     displace[i3][1] * ((displace[i1][1] + displace[i2][1]) + displace[i3][1])))) * inverse_60));
-    inertia[3] -= body[atom2body[anglelist[n][0]]].density *
-        ((((((displace[i2][1] - displace[i1][1]) * (displace[i3][2] - displace[i1][2])) -
-            ((displace[i3][1] - displace[i1][1]) * (displace[i2][2] - displace[i1][2]))) *
-           (displace[i1][1] *
-                ((((displace[i1][0] * displace[i1][0]) +
-                   displace[i2][0] * (displace[i1][0] + displace[i2][0])) +
-                  displace[i3][0] * ((displace[i1][0] + displace[i2][0]) + displace[i3][0])) +
-                 displace[i1][0] *
-                     (((displace[i1][0] + displace[i2][0]) + displace[i3][0]) + displace[i1][0])) +
-            displace[i2][1] *
-                ((((displace[i1][0] * displace[i1][0]) +
-                   displace[i2][0] * (displace[i1][0] + displace[i2][0])) +
-                  displace[i3][0] * ((displace[i1][0] + displace[i2][0]) + displace[i3][0])) +
-                 displace[i2][0] *
-                     (((displace[i1][0] + displace[i2][0]) + displace[i3][0]) + displace[i2][0])) +
-            displace[i3][1] *
-                ((((displace[i1][0] * displace[i1][0]) +
-                   displace[i2][0] * (displace[i1][0] + displace[i2][0])) +
-                  displace[i3][0] * ((displace[i1][0] + displace[i2][0]) + displace[i3][0])) +
-                 displace[i3][0] *
-                     (((displace[i1][0] + displace[i2][0]) + displace[i3][0]) +
-                      displace[i3][0])))) * inverse_120));
-    inertia[4] -= body[atom2body[anglelist[n][0]]].density *
-        ((((((displace[i3][0] - displace[i1][0]) * (displace[i2][2] - displace[i1][2])) -
-            ((displace[i2][0] - displace[i1][0]) * (displace[i3][2] - displace[i1][2]))) *
-           (displace[i1][2] *
-                ((((displace[i1][1] * displace[i1][1]) +
-                   displace[i2][1] * (displace[i1][1] + displace[i2][1])) +
-                  displace[i3][1] * ((displace[i1][1] + displace[i2][1]) + displace[i3][1])) +
-                 displace[i1][1] *
-                     (((displace[i1][1] + displace[i2][1]) + displace[i3][1]) + displace[i1][1])) +
-            displace[i2][2] *
-                ((((displace[i1][1] * displace[i1][1]) +
-                   displace[i2][1] * (displace[i1][1] + displace[i2][1])) +
-                  displace[i3][1] * ((displace[i1][1] + displace[i2][1]) + displace[i3][1])) +
-                 displace[i2][1] *
-                     (((displace[i1][1] + displace[i2][1]) + displace[i3][1]) + displace[i2][1])) +
-            displace[i3][2] *
-                ((((displace[i1][1] * displace[i1][1]) +
-                   displace[i2][1] * (displace[i1][1] + displace[i2][1])) +
-                  displace[i3][1] * ((displace[i1][1] + displace[i2][1]) + displace[i3][1])) +
-                 displace[i3][1] *
-                     (((displace[i1][1] + displace[i2][1]) + displace[i3][1]) +
-                      displace[i3][1])))) * inverse_120));
-    inertia[5] -= body[atom2body[anglelist[n][0]]].density *
-        ((((((displace[i2][0] - displace[i1][0]) * (displace[i3][1] - displace[i1][1])) -
-            ((displace[i3][0] - displace[i1][0]) * (displace[i2][1] - displace[i1][1]))) *
-           (displace[i1][0] *
-                ((((displace[i1][2] * displace[i1][2]) +
-                   displace[i2][2] * (displace[i1][2] + displace[i2][2])) +
-                  displace[i3][2] * ((displace[i1][2] + displace[i2][2]) + displace[i3][2])) +
-                 displace[i1][2] *
-                     (((displace[i1][2] + displace[i2][2]) + displace[i3][2]) + displace[i1][2])) +
-            displace[i2][0] *
-                ((((displace[i1][2] * displace[i1][2]) +
-                   displace[i2][2] * (displace[i1][2] + displace[i2][2])) +
-                  displace[i3][2] * ((displace[i1][2] + displace[i2][2]) + displace[i3][2])) +
-                 displace[i2][2] *
-                     (((displace[i1][2] + displace[i2][2]) + displace[i3][2]) + displace[i2][2])) +
-            displace[i3][0] *
-                ((((displace[i1][2] * displace[i1][2]) +
-                   displace[i2][2] * (displace[i1][2] + displace[i2][2])) +
-                  displace[i3][2] * ((displace[i1][2] + displace[i2][2]) + displace[i3][2])) +
-                 displace[i3][2] *
-                     (((displace[i1][2] + displace[i2][2]) + displace[i3][2]) +
-                      displace[i3][2])))) * inverse_120));
-  }
-
-  // reverse communicate inertia tensor of all bodies
-
-  commflag = ITENSOR;
-  comm->reverse_comm(this, 6);
-
-  double inverse_norm;
-  for (ibody = 0; ibody < nlocal_body; ibody++) {
-    inertia = body[ibody].inertia;
-
-    if (inertia[0] == 0.0) {
-      if (fabs(itensor[ibody][0]) > TOLERANCE)
-        error->all(FLERR, "Fix rigid: Bad principal moments");
-    } else {
-      if (fabs((itensor[ibody][0] - inertia[0]) / inertia[0]) > TOLERANCE)
-        error->all(FLERR, "Fix rigid: Bad principal moments");
-    }
-    if (inertia[1] == 0.0) {
-      if (fabs(itensor[ibody][1]) > TOLERANCE)
-        error->all(FLERR, "Fix rigid: Bad principal moments");
-    } else {
-      if (fabs((itensor[ibody][1] - inertia[1]) / inertia[1]) > TOLERANCE)
-        error->all(FLERR, "Fix rigid: Bad principal moments");
-    }
-    if (inertia[2] == 0.0) {
-      if (fabs(itensor[ibody][2]) > TOLERANCE)
-        error->all(FLERR, "Fix rigid: Bad principal moments");
-    } else {
-      if (fabs((itensor[ibody][2] - inertia[2]) / inertia[2]) > TOLERANCE)
-        error->all(FLERR, "Fix rigid: Bad principal moments");
-    }
-    inverse_norm = 1.0 / ((inertia[0] + inertia[1] + inertia[2]) * (THIRD));
-    if (fabs(itensor[ibody][3] * inverse_norm) > TOLERANCE ||
-        fabs(itensor[ibody][4] * inverse_norm) > TOLERANCE || fabs(itensor[ibody][5] * inverse_norm) > TOLERANCE)
-      error->all(FLERR, "Fix rigid: Bad principal moments");
-  }
-
-  // clean up
-  memory->destroy(itensor);
 }
 
 /* ----------------------------------------------------------------------
@@ -4526,12 +3928,12 @@ void FixRigidAbrade::setup_bodies_static()
 
 void FixRigidAbrade::resetup_bodies_static()
 {
+  std::cout << "FixRigidAbrade::resetup_bodies_static()" << std::endl;
 
   int i, ibody;
   int nlocal = atom->nlocal;
   double *rmass = atom->rmass;
   double *mass = atom->mass;
-
 
   // acquire ghost bodies via forward comm
   // set atom2body for ghost atoms via forward comm
@@ -4566,8 +3968,6 @@ void FixRigidAbrade::resetup_bodies_static()
     body[ibody].density = density;
     body[ibody].natoms = 0;
   }
-
-  double massone;
 
   // Cycling through the local atoms and storing their unwrapped coordinates.
   // Additionally, increment the number of atoms in their respective body
@@ -4661,9 +4061,9 @@ void FixRigidAbrade::resetup_bodies_static()
           unwrap[i3][2] * ((unwrap[i1][2] + unwrap[i2][2]) + unwrap[i3][2]))) * inverse_24;
   }
 
-  // reverse communicate xcm, mass of all bodies
-  commflag = XCM_MASS;
-  comm->reverse_comm(this, 9);
+  // reverse communicate xcm, vol of all bodies
+  commflag = XCM_VOL;
+  comm->reverse_comm(this, 8);
 
   double inverse_volume;
 
@@ -5184,6 +4584,7 @@ void FixRigidAbrade::resetup_bodies_static()
 
   // clean up
   memory->destroy(itensor);
+  std::cout << "Finished FixRigidAbrade::resetup_bodies_static()" << std::endl;
 }
 
 /* ----------------------------------------------------------------------
@@ -6777,7 +6178,7 @@ int FixRigidAbrade::pack_reverse_comm(int n, int first, double *buf)
       buf[m++] = angmom[2];
     }
 
-  } else if (commflag == XCM_MASS) {
+  } else if (commflag == XCM_VOL) {
     for (i = first; i < last; i++) {
 
       // Only communicating properties relevant to bodies which have abraded and changed shape
@@ -6792,7 +6193,6 @@ int FixRigidAbrade::pack_reverse_comm(int n, int first, double *buf)
       buf[m++] = xgc[0];
       buf[m++] = xgc[1];
       buf[m++] = xgc[2];
-      buf[m++] = body[bodyown[i]].mass;
       buf[m++] = body[bodyown[i]].volume;
       buf[m++] = static_cast<double>(body[bodyown[i]].natoms);
     }
@@ -6956,7 +6356,7 @@ void FixRigidAbrade::unpack_reverse_comm(int n, int *list, double *buf)
       angmom[2] += buf[m++];
     }
 
-  } else if (commflag == XCM_MASS) {
+  } else if (commflag == XCM_VOL) {
     for (i = 0; i < n; i++) {
       j = list[i];
 
@@ -6972,7 +6372,6 @@ void FixRigidAbrade::unpack_reverse_comm(int n, int *list, double *buf)
       xgc[0] += buf[m++];
       xgc[1] += buf[m++];
       xgc[2] += buf[m++];
-      body[bodyown[j]].mass += buf[m++];
       body[bodyown[j]].volume += buf[m++];
       body[bodyown[j]].natoms += static_cast<int>(buf[m++]);
     }

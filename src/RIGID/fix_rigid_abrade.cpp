@@ -408,7 +408,7 @@ FixRigidAbrade::FixRigidAbrade(LAMMPS *lmp, int narg, char **arg) :
       initial_remesh_flag = 1;
       
       if (update->ntimestep > 0) {
-        if (me == 0) error->warning(FLERR, "fix rigid/abrade cannot equalise surface from restart file. Bodies will not be equalised.");
+        if (me == 0) error->warning(FLERR, "fix rigid/abrade cannot equalise surface from a restart file. Bodies will not be equalised.");
         initial_remesh_flag = 0;
       }
 
@@ -760,28 +760,28 @@ void FixRigidAbrade::setup_pre_neighbor()
     setup_bodies_static();
     
     areas_and_normals();
-
-    // allocating a temporary array for use in equalise_surface()
-    if (remesh_flag) {
-      
-      // equalise_surface_array[i][average_surface_area, sum_area_minus_average_sq, variance_normalised, old variance]
-      memory->create(equalise_surface_array, nlocal_body + nghost_body, 4,
-                     "rigid/abrade:equalise_surface_array");
-      
-      //  initialising the old variance to an arbitrarily large value which will be overwritten with the first calcualted variance
-      for (int ibody = 0; ibody < (nlocal_body + nghost_body); ibody++)
-        equalise_surface_array[ibody][3] = BIG;
-    }
   }
 
   else
     pre_neighbor();
   
-  // Recursivelly equalising surface
-  if (initial_remesh_flag) equalise_surface();
-
   if ((reinitflag || !setupflag)) {
-    if (remesh_flag) memory->destroy(equalise_surface_array);
+
+    
+    if (initial_remesh_flag) {
+        // allocating a temporary array for use in equalise_surface()
+        // equalise_surface_array[i][average_surface_area, sum_area_minus_average_sq, variance_normalised, old variance]
+        memory->create(equalise_surface_array, nlocal_body + nghost_body, 4,
+                      "rigid/abrade:equalise_surface_array");
+        //  initialising the old variance to an arbitrarily large value which will be overwritten with the first calcualted variance
+        for (int ibody = 0; ibody < (nlocal_body + nghost_body); ibody++)
+          equalise_surface_array[ibody][3] = BIG;
+    
+        equalise_surface();
+        
+        // cleaning up
+        memory->destroy(equalise_surface_array);
+      }
 
     // store the global minimum assocaited surface area to be used as a remeshing threshold moving forward
     if (remesh_flag){
@@ -802,26 +802,25 @@ void FixRigidAbrade::setup_pre_neighbor()
         check_threshold_flag = 1;
     }
 
+    // optionally storing normals in global coords for visualisation
+    if (global_normals_flag){
+      double bodynormals[3], global_normals[3];  
+      for (int i = 0; i < atom->nlocal; i++) {
+      
+        // Checking that atom i is in a rigid body
+      if (atom2body[i] < 0) continue;
 
-      // optionally storing normals in global coords for visualisation
-      if (global_normals_flag){
-        double bodynormals[3], global_normals[3];  
-        for (int i = 0; i < atom->nlocal; i++) {
-        
-          // Checking that atom i is in a rigid body
-        if (atom2body[i] < 0) continue;
+      bodynormals[0] = vertexdata[i][0];
+      bodynormals[1] = vertexdata[i][1];
+      bodynormals[2] = vertexdata[i][2];
 
-        bodynormals[0] = vertexdata[i][0];
-        bodynormals[1] = vertexdata[i][1];
-        bodynormals[2] = vertexdata[i][2];
+      Body *b = &body[atom2body[i]];
+      MathExtra::matvec(b->ex_space, b->ey_space, b->ez_space, bodynormals, global_normals);
 
-        Body *b = &body[atom2body[i]];
-        MathExtra::matvec(b->ex_space, b->ey_space, b->ez_space, bodynormals, global_normals);
-
-        vertexdata[i][8]  = global_normals[0];
-        vertexdata[i][9]  = global_normals[1];
-        vertexdata[i][10] = global_normals[2];
-      }
+      vertexdata[i][8]  = global_normals[0];
+      vertexdata[i][9]  = global_normals[1];
+      vertexdata[i][10] = global_normals[2];
+    }
     }
 
     // Setting up rigid body dynamics with respect to the new topology (maybe overwritten by readfile for bodies in the .rigid restart file)
@@ -877,6 +876,13 @@ void FixRigidAbrade::setup_post_neighbor()
 {
   
   if ((reinitflag || !setupflag)) {
+
+
+
+
+
+
+
     // Rebuilding neighbor list following equalise_surface() at the end of the timestep
     if (remesh_flag) end_of_step();
     
@@ -2995,7 +3001,7 @@ void FixRigidAbrade::end_of_step()
     int remove_count_all = 0;
     MPI_Allreduce(&removed_count, &remove_count_all, 1, MPI_LMP_BIGINT, MPI_SUM, world);
 
-    if (me ==0 && update->ntimestep == 0 && initial_remesh_flag)
+    if (me ==0 && initial_remesh_flag)
       utils::logmesg(lmp, "fix rigid/abrade: {} atoms remeshed on timestep {}\n", remove_count_all, update->ntimestep);
 
     // resetting nlocal
@@ -5700,7 +5706,7 @@ void FixRigidAbrade::write_restart_file(const char *file)
 
   // writing the offset flag used in the previous run
     fmt::print(fp,
-               "# fix rigid/abrade offset_flag:\n\n1\n{}\n\n", // Specifying here that there is one row of flags to be read in by readfile(). It would be more elegant to assume there is always one row in readfiles(), but this works. 
+               "# fix rigid/abrade restart data for 1 flags: offset_flag:\n\n1\n{}\n\n", // Specifying here that there is one row of flags to be read in by readfile(). It would be more elegant to assume there is always one row in readfiles(), but this works. 
                offset_flag); // Additional flags can be added here and then referenced in readfile() if needed.
 
 

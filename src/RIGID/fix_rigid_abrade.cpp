@@ -59,7 +59,6 @@
 #include <string>    // for string class
 #include <utility>
 #include <vector>
-#include <iostream>
 #include <algorithm> 
 
 using namespace LAMMPS_NS;
@@ -747,29 +746,30 @@ void FixRigidAbrade::setup_pre_neighbor()
 
     if (comm->me == 0 && neighbor->style != Neighbor::MULTI)
       error->one(FLERR, "fix rigid/abrade requires hybrid neighbor lists to be enabled through the multi neighbor style.");
-
-    // initial setup of bodies for the initial neighborlist build
-    // Rigid body properties such as the mass, volume, and inertia are calculated from the facets stored in the angles through resetup_bodies_static() 
-    // These angles are made available once the initial neighborlist is built and neighbor->build_topology() is called. 
-    setup_bodies_static();
-  
+      
+      // initial setup of bodies for the initial neighborlist build
+      // Rigid body properties such as the mass, volume, and inertia are calculated from the facets stored in the angles through resetup_bodies_static() 
+      // These angles are made available once the initial neighborlist is built and neighbor->build_topology() is called. 
+      setup_bodies_static();
+      
+      // if starting from a restart file then atoms need to be displaced 
+      // outwards from their COM to allign with the icosohedra vertices 
+      // Preneighbor is called to update image flags
+      if ((update->ntimestep > 0) && offset_flag) {
+        offset_setup_bodies_static();
+        pre_neighbor();
+      }
   }
   
   else
-  pre_neighbor();
+    pre_neighbor();
 
 }
 
 void FixRigidAbrade::setup_post_neighbor()
-{
-  std::cout << "FixRigidAbrade::setup_post_neighbor()" << std::endl;
-  
+{ 
   if ((reinitflag || !setupflag)) {
-    
-    // if starting from a restart file then atoms need to be displaced 
-    // outwards from their COM to allign with the icosohedra vertices
-    if (update->ntimestep > 0) 
-      pre_setup_bodies_static();
+
 
     // Calculate rigid body properties such as the mass, volume, and inertia by traversing the now constructed angles neighbor lists 
     resetup_bodies_static();
@@ -844,10 +844,17 @@ void FixRigidAbrade::setup_post_neighbor()
       readfile();
 
     // optionally offsetting atoms towards the COM such that the tetrahedra vertices lay on the surface of the particle
-    for (int ibody = 0; ibody < (nlocal_body + nghost_body); ibody++) body[ibody].body_offset_flag = 1;
-    offset_vertices_inwards();
-    for (int ibody = 0; ibody < (nlocal_body + nghost_body); ibody++) body[ibody].body_offset_flag = 0;
-    
+    if (offset_flag) {
+      
+      for (int ibody = 0; ibody < (nlocal_body + nghost_body); ibody++) 
+        body[ibody].body_offset_flag = 1;
+      
+        offset_vertices_inwards();
+      
+      for (int ibody = 0; ibody < (nlocal_body + nghost_body); ibody++) 
+        body[ibody].body_offset_flag = 0;
+    }
+
     // printing body vcm and acm
     for (int ibody = 0; ibody < nlocal_body; ibody++) {
       utils::logmesg(lmp, "fix rigid/abrade: Initial rigid body properties for body id {}, inertia: ({:.4f}, {:.4f}, {:.4f}), volume: {:.4f}, density: {:.4f}, mass: {:.4f}, xcm: ({:.4f}, {:.4f}, {:.4f})\n", atom->tag[body[ibody].ilocal], body[ibody].inertia[0], body[ibody].inertia[1], body[ibody].inertia[2], body[ibody].volume, body[ibody].density, body[ibody].mass, body[ibody].xcm[0], body[ibody].xcm[1], body[ibody].xcm[2]);
@@ -1910,8 +1917,6 @@ void FixRigidAbrade::triangle_thetas(int a_index, int b_index, int c_index, cons
   ---------------------------------------------------------------------- */
 void FixRigidAbrade::offset_vertices_inwards(){
 
-  if (!offset_flag) return;
-
   int nlocal = atom->nlocal;
   double *radius = atom->radius;
   double **x = atom->x;
@@ -1978,8 +1983,6 @@ void FixRigidAbrade::offset_vertices_inwards(){
   Offsetting the positions of atom outwards away from the COM by by their radius.
   ---------------------------------------------------------------------- */
 void FixRigidAbrade::offset_vertices_outwards(){
-
-  if (!offset_flag) return;
 
   int nlocal = atom->nlocal;
   double *radius = atom->radius;
@@ -2880,7 +2883,7 @@ void FixRigidAbrade::final_integrate()
 
   if (global_abraded_flag){
 
-    if (proc_abraded_flag) {
+    if (proc_abraded_flag && offset_flag) {
       offset_vertices_outwards();
     }
 
@@ -2896,7 +2899,7 @@ void FixRigidAbrade::final_integrate()
     // recalculate areas and normals using the updated body coordinates stored in displace[i] (also check if remeshing is required)
     areas_and_normals();
 
-    if (proc_abraded_flag)
+    if (proc_abraded_flag && offset_flag)
       offset_vertices_inwards();
 
     // Setting the displacement velocities of all atoms back to 0
@@ -3056,13 +3059,15 @@ void FixRigidAbrade::end_of_step()
 
     reset_atom2body();
 
-    offset_vertices_outwards();
+    if (offset_flag)
+      offset_vertices_outwards();
 
     resetup_bodies_static();
     
     areas_and_normals();
 
-    offset_vertices_inwards();
+    if (offset_flag)
+      offset_vertices_inwards();
 
     for (int ibody = 0; ibody < (nlocal_body + nghost_body); ibody++)
       {
@@ -3728,50 +3733,37 @@ int FixRigidAbrade::rendezvous_body(int n, char *inbuf, int &rflag, int *&procli
 
 /* ----------------------------------------------------------------------
   Pushing atoms outwards from their COM following a read in from a restart 
-  so that they can be correctly setup in setup_bodies_static()
+  so that they can be correctly setup in resetup_bodies_static()
 ------------------------------------------------------------------------- */
 
-void FixRigidAbrade::pre_setup_bodies_static() {
+void FixRigidAbrade::offset_setup_bodies_static() {
   
-  if (!offset_flag) return;
-
   int nlocal = atom->nlocal;
   double **x = atom->x;
   double *radius = atom->radius;
   double len_i;
   double dx[3];
   
-  // Communicate bodies so ghost bodies can be accessed
-  nghost_body = 0;
-  commflag = FULL_BODY;
-  comm->forward_comm(this);
-  reset_atom2body();
-  
-  // marking all bodies as having abraded so required information is communicated
-  for (int ibody = 0; ibody < (nlocal_body + nghost_body); ibody++) 
-    body[ibody].abraded_flag = 1;
-  proc_abraded_flag = 1;
+  // Cycling through the local atoms and storing their unwrapped coordinates.
+  for (int i = 0; i < atom->nlocal; i++) {
+    if (atom2body[i] < 0) continue;
+    domain->unmap(x[i], atom->image[i], unwrap[i]);  
+  }
 
-// Cycling through the local atoms and storing their unwrapped coordinates.
-for (int i = 0; i < atom->nlocal; i++) {
-  if (atom2body[i] < 0) continue;
-  domain->unmap(x[i], atom->image[i], unwrap[i]);  
-}
+  // communicate unwrapped position of owned atoms to ghost atoms
+  commflag = UNWRAP;
+  comm->forward_comm(this, 3);
 
-// communicate unwrapped position of owned atoms to ghost atoms
-commflag = UNWRAP;
-comm->forward_comm(this, 3);
-  
-// offsetting atoms about their body's owning atom which is placed at the COM
+  // offsetting atoms about their body's owning atom which is placed at the COM
   for (int i = 0; i < atom->nlocal; i++) {
     // passing over atoms which own bodies since their position does not need to be offset
     if (bodytag[i] == atom->tag[i]) continue;
     if (atom2body[i] < 0) continue;
-  
+    
     dx[0] = unwrap[i][0] - unwrap[atom->map(bodytag[i])][0];
     dx[1] = unwrap[i][1] - unwrap[atom->map(bodytag[i])][1];
     dx[2] = unwrap[i][2] - unwrap[atom->map(bodytag[i])][2];
-
+    
     // offsetting atoms outwards towards the COM by the atoms radius  
     len_i = MathExtra::len3(dx);
     x[i][0] += radius[i] * (dx[0]/len_i);
@@ -3781,7 +3773,8 @@ comm->forward_comm(this, 3);
 
   // Mapping atom positions back to the simulation cell ready for setup_bodies_static()
   for (int i = 0; i < (atom->nlocal); i++)
-    domain->remap(atom->x[i], atom->image[i]); 
+  domain->remap(atom->x[i], atom->image[i]); 
+
 }
 
 /* ----------------------------------------------------------------------
@@ -3928,8 +3921,6 @@ void FixRigidAbrade::setup_bodies_static()
 
 void FixRigidAbrade::resetup_bodies_static()
 {
-  std::cout << "FixRigidAbrade::resetup_bodies_static()" << std::endl;
-
   int i, ibody;
   int nlocal = atom->nlocal;
   double *rmass = atom->rmass;
@@ -4584,7 +4575,6 @@ void FixRigidAbrade::resetup_bodies_static()
 
   // clean up
   memory->destroy(itensor);
-  std::cout << "Finished FixRigidAbrade::resetup_bodies_static()" << std::endl;
 }
 
 /* ----------------------------------------------------------------------

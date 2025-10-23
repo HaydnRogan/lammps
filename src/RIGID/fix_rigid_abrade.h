@@ -283,7 +283,7 @@ private:
   void set_xv();
   void set_v();
   void create_bodies(tagint *);
-  void pre_setup_bodies_static();
+  void offset_setup_bodies_static();
   void setup_bodies_static();
   void resetup_bodies_static();
   void setup_bodies_dynamic();

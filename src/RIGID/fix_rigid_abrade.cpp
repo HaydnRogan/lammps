@@ -2804,14 +2804,14 @@ void FixRigidAbrade::final_integrate()
 
     // Checking that atom i is in a rigid body
     if (atom2body[i] < 0) continue;
-   
+      
     // check if the atom has been assigned an abrasion velocity.
     if ((!vertexdata[i][4]) && (!vertexdata[i][5]) && (!vertexdata[i][6])) continue;
 
     // Flagging that the body owning atom i has been abraded and has changed shape
     Body *b = &body[atom2body[i]];
     b->abraded_flag = 1;
-     
+    
     global_displace_vel[0] = vertexdata[i][4];
     global_displace_vel[1] = vertexdata[i][5];
     global_displace_vel[2] = vertexdata[i][6];
@@ -2944,6 +2944,7 @@ void FixRigidAbrade::final_integrate()
 
 void FixRigidAbrade::end_of_step()
 {
+
 
   // if remeshing has been processed on the current timestep rebuild the neighbor list and formally remove dlist atoms
   if (rebuild_flag) {
@@ -5073,9 +5074,7 @@ void FixRigidAbrade::readfile()
 
 void FixRigidAbrade::write_restart_file(const char *file)
 {
-  // forward communicate of vcm to all ghost copies
-  commflag = FULL_BODY;
-  comm->forward_comm(this, 10);
+  // forward communicate of vcm and angmom to all ghost copies
   commflag = FINAL;
   comm->forward_comm(this, 10);
 
@@ -5242,8 +5241,6 @@ void FixRigidAbrade::write_restart_file(const char *file)
   memory->destroy(body_buf);
   if (me == 0) fclose(fp);
 }
-
-
 
 /* ----------------------------------------------------------------------
    randomize rigid body VCMs with respect to a given temperature KT

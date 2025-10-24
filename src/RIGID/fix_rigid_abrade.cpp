@@ -2804,18 +2804,17 @@ void FixRigidAbrade::final_integrate()
 
     // Checking that atom i is in a rigid body
     if (atom2body[i] < 0) continue;
-      
+   
     // check if the atom has been assigned an abrasion velocity.
     if ((!vertexdata[i][4]) && (!vertexdata[i][5]) && (!vertexdata[i][6])) continue;
-
-    
-    global_displace_vel[0] = vertexdata[i][4];
-    global_displace_vel[1] = vertexdata[i][5];
-    global_displace_vel[2] = vertexdata[i][6];
 
     // Flagging that the body owning atom i has been abraded and has changed shape
     Body *b = &body[atom2body[i]];
     b->abraded_flag = 1;
+     
+    global_displace_vel[0] = vertexdata[i][4];
+    global_displace_vel[1] = vertexdata[i][5];
+    global_displace_vel[2] = vertexdata[i][6];
 
     // Convert displacement velocities from global coordinates to body coordinates
     MathExtra::transpose_matvec(b->ex_space, b->ey_space, b->ez_space, global_displace_vel,
@@ -2945,7 +2944,6 @@ void FixRigidAbrade::final_integrate()
 
 void FixRigidAbrade::end_of_step()
 {
-
 
   // if remeshing has been processed on the current timestep rebuild the neighbor list and formally remove dlist atoms
   if (rebuild_flag) {
@@ -3733,7 +3731,7 @@ int FixRigidAbrade::rendezvous_body(int n, char *inbuf, int &rflag, int *&procli
 
 /* ----------------------------------------------------------------------
   Pushing atoms outwards from their COM following a read in from a restart 
-  so that they can be correctly setup in resetup_bodies_static()
+  so that they can be correctly setup in the first resetup_bodies_static()
 ------------------------------------------------------------------------- */
 
 void FixRigidAbrade::offset_setup_bodies_static() {
@@ -5075,11 +5073,11 @@ void FixRigidAbrade::readfile()
 
 void FixRigidAbrade::write_restart_file(const char *file)
 {
-  //   // forward communicate of vcm to all ghost copies
-  // commflag = FULL_BODY;
-  // comm->forward_comm(this, 10);
-  // commflag = FINAL;
-  // comm->forward_comm(this, 10);
+  // forward communicate of vcm to all ghost copies
+  commflag = FULL_BODY;
+  comm->forward_comm(this, 10);
+  commflag = FINAL;
+  comm->forward_comm(this, 10);
 
   FILE *fp;
   

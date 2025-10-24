@@ -284,8 +284,8 @@ private:
   void set_v();
   void create_bodies(tagint *);
   void offset_setup_bodies_static();
+  void setup_bodies();
   void setup_bodies_static();
-  void resetup_bodies_static();
   void setup_bodies_dynamic();
   void apply_langevin_thermostat();
   void compute_forces_and_torques();

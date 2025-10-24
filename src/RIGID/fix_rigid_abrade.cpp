@@ -732,12 +732,12 @@ void FixRigidAbrade::init_list(int /*id*/, NeighList *ptr)
    are inserted from mol template.
      do not do dynamic init if read body properties from inpfile. this
    is b/c the inpfile defines the static and dynamic properties and may not
-   be computable if contain overlapping particles setup_bodies_static()
+   be computable if contain overlapping particles setup_bodies()
    reads inpfile itself.
      cannot do this until now, b/c requires comm->setup() to have setup stencil
    invoke pre_neighbor() to ensure body xcmimage flags are reset
      needed if Verlet::setup::pbc() has remapped/migrated atoms for 2nd run
-     setup_bodies_static() invokes pre_neighbor itself
+     setup_bodies() invokes pre_neighbor itself
 ------------------------------------------------------------------------- */
 
 void FixRigidAbrade::setup_pre_neighbor()
@@ -748,9 +748,9 @@ void FixRigidAbrade::setup_pre_neighbor()
       error->one(FLERR, "fix rigid/abrade requires hybrid neighbor lists to be enabled through the multi neighbor style.");
       
       // initial setup of bodies for the initial neighborlist build
-      // Rigid body properties such as the mass, volume, and inertia are calculated from the facets stored in the angles through resetup_bodies_static() 
+      // Rigid body properties such as the mass, volume, and inertia are calculated from the facets stored in the angles through setup_bodies_static() 
       // These angles are made available once the initial neighborlist is built and neighbor->build_topology() is called. 
-      setup_bodies_static();
+      setup_bodies();
       
       // if starting from a restart file then atoms need to be displaced 
       // outwards from their COM to allign with the icosohedra vertices 
@@ -772,7 +772,7 @@ void FixRigidAbrade::setup_post_neighbor()
 
 
     // Calculate rigid body properties such as the mass, volume, and inertia by traversing the now constructed angles neighbor lists 
-    resetup_bodies_static();
+    setup_bodies_static();
     
     // Calculate the associated areas and normals of each surface atom
     areas_and_normals();
@@ -839,7 +839,7 @@ void FixRigidAbrade::setup_post_neighbor()
     // Setting up rigid body dynamics with respect to the topology (maybe overwritten by readfile for bodies in the .rigid restart file)
     setup_bodies_dynamic();
 
-    // Optionally read in a fix specific restart file which preserves some per-atom and per-body between runs (this will overwrite the initial values calculated from resetup_bodies_static())
+    // Optionally read in a fix specific restart file which preserves some per-atom and per-body between runs (this will overwrite the initial values calculated from setup_bodies_static())
     if (inpfile) 
       readfile();
 
@@ -1343,7 +1343,7 @@ void FixRigidAbrade::equalise_surface()
   // processing the end of the recursive calls of equalise_surface()
   if (equalise_surface_flag) {
 
-    resetup_bodies_static();
+    setup_bodies_static();
 
     equalise_surface_flag = 0;
 
@@ -2095,7 +2095,7 @@ void FixRigidAbrade::remesh(std::vector<int> dlist)
     body[body_remove_id].abraded_flag = 1;
 
     // If the atom is stored on the processors then set its associated body flags to mark that the it no longer belongs to a body
-    // It is therefore not processed in areas_and_normals() and resetup_bodies_static()
+    // It is therefore not processed in areas_and_normals() and setup_bodies_static()
     // This prevents the need to repeatedly rebuild the neighbor lists each time an atom is removed during remesh().
 
     if (remove_id >= 0) {
@@ -2887,7 +2887,7 @@ void FixRigidAbrade::final_integrate()
     }
 
     // recalculate properties and normals for each abraded body
-    resetup_bodies_static();
+    setup_bodies_static();
 
     // forward comm displacement velocities so that preference can be given to abrading atoms during remeshing
     if (remesh_flag) {
@@ -3061,7 +3061,7 @@ void FixRigidAbrade::end_of_step()
     if (offset_flag)
       offset_vertices_outwards();
 
-    resetup_bodies_static();
+    setup_bodies_static();
     
     areas_and_normals();
 
@@ -3113,7 +3113,7 @@ void FixRigidAbrade::final_integrate_respa(int ilevel, int /*iloop*/)
    done during pre_neighbor so will be after call to pbc()
      and after fix_deform::pre_exchange() may have flipped box
    use domain->remap() in case xcm is far away from box
-     due to first-time definition of rigid body in setup_bodies_static()
+     due to first-time definition of rigid body in setup_bodies()
      or due to box flip
    also adjust imagebody = rigid body image flags, due to xcm remap
    then communicate bodies so other procs will know of changes to body xcm
@@ -3191,7 +3191,7 @@ bigint FixRigidAbrade::dof(int tgroup)
 {
   int i, j;
 
-  // cannot count DOF correctly unless setup_bodies_static() has been called
+  // cannot count DOF correctly unless setup_bodies() has been called
 
   if (!setupflag) {
     if (comm->me == 0)
@@ -3732,7 +3732,7 @@ int FixRigidAbrade::rendezvous_body(int n, char *inbuf, int &rflag, int *&procli
 
 /* ----------------------------------------------------------------------
   Pushing atoms outwards from their COM following a read in from a restart 
-  so that they can be correctly setup in the first resetup_bodies_static()
+  so that they can be correctly setup in the first setup_bodies_static()
 ------------------------------------------------------------------------- */
 
 void FixRigidAbrade::offset_setup_bodies_static() {
@@ -3779,12 +3779,12 @@ void FixRigidAbrade::offset_setup_bodies_static() {
 /* ----------------------------------------------------------------------
    One-time initialization of rigid bodies in preparation for the initial neighborlist build 
    Rigid body properties are later set by contructing tetrahedra about facets (defined by the angles) with reference to F. Tonon, Explicit Exact Formulas for the 3-D Tetrahedron Inertia Tensor in Terms of its Vertex Coordinates, J. Math. Stat. 1 (2004). doi:10.3844/jmssp.2005.8.11
-   This is completed by resetup_bodies_static() following the building of the angles neighbor list in setup_post_neighbor()
+   This is completed by setup_bodies_static() following the building of the angles neighbor list in setup_post_neighbor()
    
    (Note: support for non-spherical rotational extended atoms has been removed for fix rigid/abrade)
    ------------------------------------------------------------------------- */
 
-void FixRigidAbrade::setup_bodies_static()
+void FixRigidAbrade::setup_bodies()
 {
 
   int i, ibody;
@@ -3863,7 +3863,7 @@ void FixRigidAbrade::setup_bodies_static()
   comm->forward_comm(this);
   reset_atom2body();
 
-  // zero body properties (to be setup using the angles in resetup_bodies_static() following the building of the topology neighborlists)
+  // zero body properties (to be setup using the angles in setup_bodies_static() following the building of the topology neighborlists)
   double *xcm, *xgc, *vcm, *angmom;
 
   for (ibody = 0; ibody < nlocal_body + nghost_body; ibody++) {
@@ -3887,7 +3887,7 @@ void FixRigidAbrade::setup_bodies_static()
     angmom = body[ibody].angmom;
     angmom[0] = angmom[1] = angmom[2] = 0.0;
 
-    // Initally setting all bodies to have been abraded at t = 0 so that they are correctly communicated and processed during setup_bodies_static() and resetup_bodies_static()
+    // Initally setting all bodies to have been abraded at t = 0 so that they are correctly communicated and processed during setup_bodies() and setup_bodies_static()
     body[ibody].abraded_flag = 1;
     body[ibody].remesh_atom = 0;
   }
@@ -3918,7 +3918,7 @@ void FixRigidAbrade::setup_bodies_static()
    Recalculation of Abraded Bodies' COM, Volume, and Inertia
 ------------------------------------------------------------------------- */
 
-void FixRigidAbrade::resetup_bodies_static()
+void FixRigidAbrade::setup_bodies_static()
 {
   int i, ibody;
   int nlocal = atom->nlocal;

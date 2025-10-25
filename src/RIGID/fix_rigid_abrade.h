@@ -46,7 +46,7 @@ class FixRigidAbrade : public Fix {
   void grow_arrays(int) override;
   void copy_arrays(int, int, int) override;
   void set_arrays(int) override;
-  void set_molecule(int, tagint, int, double *, double *, double *) override;
+  // void set_molecule(int, tagint, int, double *, double *, double *) override; // not yet supported, see .cpp file for further details
   void resample_momenta(int, int, class RanPark *, double);
 
 
@@ -60,7 +60,6 @@ class FixRigidAbrade : public Fix {
   void setup_pre_neighbor() override;
   void pre_neighbor() override;
   void setup_post_neighbor() override;
-  // void post_neighbor() override;
   bigint dof(int) override;
   void deform(int) override;
   void reset_dt() override;

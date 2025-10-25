@@ -250,16 +250,19 @@ FixRigidAbrade::FixRigidAbrade(LAMMPS *lmp, int narg, char **arg) :
       reinitflag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
       iarg += 2;
 
-    } else if (strcmp(arg[iarg], "mol") == 0) {
-      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix rigid/abrade command");
-      int imol = atom->find_molecule(arg[iarg + 1]);
-      if (imol == -1) error->all(FLERR, "Molecule template ID for fix rigid/abrade does not exist");
-      onemols = &atom->molecules[imol];
-      nmol = onemols[0]->nset;
-      restart_file = 1;
-      iarg += 2;
+    } 
+    // Note: the following mol keyword is not yet supported in fix rigid/abrade.
+    // else if (strcmp(arg[iarg], "mol") == 0) {
+    //   if (iarg + 2 > narg) error->all(FLERR, "Illegal fix rigid/abrade command");
+    //   int imol = atom->find_molecule(arg[iarg + 1]);
+    //   if (imol == -1) error->all(FLERR, "Molecule template ID for fix rigid/abrade does not exist");
+    //   onemols = &atom->molecules[imol];
+    //   nmol = onemols[0]->nset;
+    //   restart_file = 1;
+    //   iarg += 2;
 
-    } else if (strcmp(arg[iarg], "temp") == 0) {
+    // } 
+    else if (strcmp(arg[iarg], "temp") == 0) {
       if (iarg + 4 > narg) error->all(FLERR, "Illegal fix rigid/abrade command");
       if (!utils::strmatch(style, "^rigid/n.t/abrade"))
         error->all(FLERR, "Illegal fix rigid command");
@@ -417,22 +420,21 @@ FixRigidAbrade::FixRigidAbrade(LAMMPS *lmp, int narg, char **arg) :
       error->all(FLERR, "Illegal fix rigid/abrade command");
   }
 
-  // error check and further setup for Molecule template
+  // error check and further setup for Molecule template -- Not suported for fix rigid/abrade
+  // if (onemols) {
+  //   for (i = 0; i < nmol; i++) {
+  //     if (onemols[i]->xflag == 0)
+  //       error->all(FLERR, "Fix rigid/abrade molecule must have coordinates");
+  //     if (onemols[i]->typeflag == 0)
+  //       error->all(FLERR, "Fix rigid/abrade molecule must have atom types");
 
-  if (onemols) {
-    for (i = 0; i < nmol; i++) {
-      if (onemols[i]->xflag == 0)
-        error->all(FLERR, "Fix rigid/abrade molecule must have coordinates");
-      if (onemols[i]->typeflag == 0)
-        error->all(FLERR, "Fix rigid/abrade molecule must have atom types");
-
-      // fix rigid/abrade uses center, masstotal, COM, inertia of molecule
-      onemols[i]->compute_center();
-      onemols[i]->compute_mass();
-      onemols[i]->compute_com();
-      onemols[i]->compute_inertia();
-    }
-  }
+  //     // fix rigid/abrade uses center, masstotal, COM, inertia of molecule
+  //     onemols[i]->compute_center();
+  //     onemols[i]->compute_mass();
+  //     onemols[i]->compute_com();
+  //     onemols[i]->compute_inertia();
+  //   }
+  // }
 
   // expand the vertexdata array to account for the optional normals keyword
 
@@ -770,7 +772,6 @@ void FixRigidAbrade::setup_post_neighbor()
 { 
   if ((reinitflag || !setupflag)) {
 
-
     // Calculate rigid body properties such as the mass, volume, and inertia by traversing the now constructed angles neighbor lists 
     setup_bodies_static();
     
@@ -778,7 +779,7 @@ void FixRigidAbrade::setup_post_neighbor()
     areas_and_normals();
     
     // process equalise surface optional keyword
-    if (initial_remesh_flag) {
+    if (initial_remesh_flag && update->ntimestep == 0) {
 
       // allocating a temporary array for use in equalise_surface()
       // equalise_surface_array[i][average_surface_area, sum_area_minus_average_sq, variance_normalised, old variance]
@@ -2975,7 +2976,7 @@ void FixRigidAbrade::end_of_step()
     MPI_Allreduce(&removed_count, &remove_count_all, 1, MPI_LMP_BIGINT, MPI_SUM, world);
 
     // Print the initial amount of atoms remeshed under the equalise keyword
-    if (me ==0 && initial_remesh_flag)
+    if ( ( me ==0 ) && (update->ntimestep == 0))
       utils::logmesg(lmp, "fix rigid/abrade: {} atoms remeshed on timestep {}\n", remove_count_all, update->ntimestep);
 
     // resetting nlocal
@@ -3577,11 +3578,12 @@ void FixRigidAbrade::create_bodies(tagint *bodyID)
   // maxextent = max of rsqfar across all procs
   // if defined, include molecule->maxextent
 
+  // if the goal in the future is to hide the hybrid neighbor list construction away from the input script, maxextent will be useful. 
   MPI_Allreduce(&rsqfar, &maxextent, 1, MPI_DOUBLE, MPI_MAX, world);
   maxextent = sqrt(maxextent);
-  if (onemols) {
-    for (i = 0; i < nmol; i++) maxextent = MAX(maxextent, onemols[i]->maxextent);
-  }
+  // if (onemols) {
+  //   for (i = 0; i < nmol; i++) maxextent = MAX(maxextent, onemols[i]->maxextent);
+  // }
 }
 
 /* ----------------------------------------------------------------------
@@ -3823,16 +3825,16 @@ void FixRigidAbrade::setup_bodies()
   // extended = 1 if using molecule template with finite-size particles
   // require all molecules in template to have consistent radiusflag
 
-  if (onemols) {
-    int radiusflag = onemols[0]->radiusflag;
-    for (i = 1; i < nmol; i++) {
-      if (onemols[i]->radiusflag != radiusflag)
-        error->all(FLERR,
-                   "Inconsistent use of finite-size particles "
-                   "by molecule template molecules");
-    }
-    if (radiusflag) extended = 1;
-  }
+  // if (onemols) {
+  //   int radiusflag = onemols[0]->radiusflag;
+  //   for (i = 1; i < nmol; i++) {
+  //     if (onemols[i]->radiusflag != radiusflag)
+  //       error->all(FLERR,
+  //                  "Inconsistent use of finite-size particles "
+  //                  "by molecule template molecules");
+  //   }
+  //   if (radiusflag) extended = 1;
+  // }
 
   if (extended) {
    
@@ -5428,8 +5430,15 @@ void FixRigidAbrade::set_arrays(int i)
     for (int k = 0; k < 6; k++) vatom[i][k] = 0.0;
 }
 
+
+
 /* ----------------------------------------------------------------------
-   initialize a molecule inserted by another fix, e.g. deposit or pour
+  
+NOTE: This functionality is not supported for fix rigid/abrade. This will require some more thought on how to dynamically allocate owning spheres to a hybrid neighbor list. 
+      Additionally, rigid body properties will not be able to be simply read in from the onemols. setup_bodies_static() will need to be called 
+      to consider the angles and tetrahedra 
+
+  initialize a molecule inserted by another fix, e.g. deposit or pour
    called when molecule is created
    nlocalprev = # of atoms on this proc before molecule inserted
    tagprev = atom ID previous to new atoms in the molecule
@@ -5439,86 +5448,86 @@ void FixRigidAbrade::set_arrays(int i)
           relative to template in Molecule class
 ------------------------------------------------------------------------- */
 
-void FixRigidAbrade::set_molecule(int nlocalprev, tagint tagprev, int imol, double *xgeom,
-                                  double *vcm, double *quat)
-{
-  int m;
-  double ctr2com[3], ctr2com_rotate[3];
-  double rotmat[3][3];
+// void FixRigidAbrade::set_molecule(int nlocalprev, tagint tagprev, int imol, double *xgeom,
+//                                   double *vcm, double *quat)
+// {
+//   int m;
+//   double ctr2com[3], ctr2com_rotate[3];
+//   double rotmat[3][3];
 
-  // increment total # of rigid bodies
+//   // increment total # of rigid bodies
 
-  nbody++;
+//   nbody++;
 
-  // loop over atoms I added for the new body
+//   // loop over atoms I added for the new body
 
-  int nlocal = atom->nlocal;
-  if (nlocalprev == nlocal) return;
+//   int nlocal = atom->nlocal;
+//   if (nlocalprev == nlocal) return;
 
-  tagint *tag = atom->tag;
+//   tagint *tag = atom->tag;
 
-  for (int i = nlocalprev; i < nlocal; i++) {
-    bodytag[i] = tagprev + onemols[imol]->comatom;
-    if (tag[i] - tagprev == onemols[imol]->comatom) bodyown[i] = nlocal_body;
+//   for (int i = nlocalprev; i < nlocal; i++) {
+//     bodytag[i] = tagprev + onemols[imol]->comatom;
+//     if (tag[i] - tagprev == onemols[imol]->comatom) bodyown[i] = nlocal_body;
 
-    m = tag[i] - tagprev - 1;
-    displace[i][0] = onemols[imol]->dxbody[m][0];
-    displace[i][1] = onemols[imol]->dxbody[m][1];
-    displace[i][2] = onemols[imol]->dxbody[m][2];
+//     m = tag[i] - tagprev - 1;
+//     displace[i][0] = onemols[imol]->dxbody[m][0];
+//     displace[i][1] = onemols[imol]->dxbody[m][1];
+//     displace[i][2] = onemols[imol]->dxbody[m][2];
 
-    if (extended) {
-      eflags[i] = 0;
-      if (onemols[imol]->radiusflag) {
-        eflags[i] |= SPHERE;
-      }
-    }
+//     if (extended) {
+//       eflags[i] = 0;
+//       if (onemols[imol]->radiusflag) {
+//         eflags[i] |= SPHERE;
+//       }
+//     }
 
-    if (bodyown[i] >= 0) {
-      if (nlocal_body == nmax_body) grow_body();
-      Body *b = &body[nlocal_body];
-      b->mass = onemols[imol]->masstotal;
-      b->natoms = onemols[imol]->natoms;
-      b->xgc[0] = xgeom[0];
-      b->xgc[1] = xgeom[1];
-      b->xgc[2] = xgeom[2];
+//     if (bodyown[i] >= 0) {
+//       if (nlocal_body == nmax_body) grow_body();
+//       Body *b = &body[nlocal_body];
+//       b->mass = onemols[imol]->masstotal;
+//       b->natoms = onemols[imol]->natoms;
+//       b->xgc[0] = xgeom[0];
+//       b->xgc[1] = xgeom[1];
+//       b->xgc[2] = xgeom[2];
 
-      // new COM = Q (onemols[imol]->xcm - onemols[imol]->center) + xgeom
-      // Q = rotation matrix associated with quat
+//       // new COM = Q (onemols[imol]->xcm - onemols[imol]->center) + xgeom
+//       // Q = rotation matrix associated with quat
 
-      MathExtra::quat_to_mat(quat, rotmat);
-      MathExtra::sub3(onemols[imol]->com, onemols[imol]->center, ctr2com);
-      MathExtra::matvec(rotmat, ctr2com, ctr2com_rotate);
-      MathExtra::add3(ctr2com_rotate, xgeom, b->xcm);
+//       MathExtra::quat_to_mat(quat, rotmat);
+//       MathExtra::sub3(onemols[imol]->com, onemols[imol]->center, ctr2com);
+//       MathExtra::matvec(rotmat, ctr2com, ctr2com_rotate);
+//       MathExtra::add3(ctr2com_rotate, xgeom, b->xcm);
 
-      b->vcm[0] = vcm[0];
-      b->vcm[1] = vcm[1];
-      b->vcm[2] = vcm[2];
-      b->inertia[0] = onemols[imol]->inertia[0];
-      b->inertia[1] = onemols[imol]->inertia[1];
-      b->inertia[2] = onemols[imol]->inertia[2];
+//       b->vcm[0] = vcm[0];
+//       b->vcm[1] = vcm[1];
+//       b->vcm[2] = vcm[2];
+//       b->inertia[0] = onemols[imol]->inertia[0];
+//       b->inertia[1] = onemols[imol]->inertia[1];
+//       b->inertia[2] = onemols[imol]->inertia[2];
 
-      // final quat is product of insertion quat and original quat
-      // true even if insertion rotation was not around COM
+//       // final quat is product of insertion quat and original quat
+//       // true even if insertion rotation was not around COM
 
-      MathExtra::quatquat(quat, onemols[imol]->quat, b->quat);
-      MathExtra::q_to_exyz(b->quat, b->ex_space, b->ey_space, b->ez_space);
+//       MathExtra::quatquat(quat, onemols[imol]->quat, b->quat);
+//       MathExtra::q_to_exyz(b->quat, b->ex_space, b->ey_space, b->ez_space);
 
-      MathExtra::transpose_matvec(b->ex_space, b->ey_space, b->ez_space, ctr2com_rotate,
-                                  b->xgc_body);
-      b->xgc_body[0] *= -1;
-      b->xgc_body[1] *= -1;
-      b->xgc_body[2] *= -1;
+//       MathExtra::transpose_matvec(b->ex_space, b->ey_space, b->ez_space, ctr2com_rotate,
+//                                   b->xgc_body);
+//       b->xgc_body[0] *= -1;
+//       b->xgc_body[1] *= -1;
+//       b->xgc_body[2] *= -1;
 
-      b->angmom[0] = b->angmom[1] = b->angmom[2] = 0.0;
-      b->omega[0] = b->omega[1] = b->omega[2] = 0.0;
-      b->conjqm[0] = b->conjqm[1] = b->conjqm[2] = b->conjqm[3] = 0.0;
+//       b->angmom[0] = b->angmom[1] = b->angmom[2] = 0.0;
+//       b->omega[0] = b->omega[1] = b->omega[2] = 0.0;
+//       b->conjqm[0] = b->conjqm[1] = b->conjqm[2] = b->conjqm[3] = 0.0;
 
-      b->image = ((imageint) IMGMAX << IMG2BITS) | ((imageint) IMGMAX << IMGBITS) | IMGMAX;
-      b->ilocal = i;
-      nlocal_body++;
-    }
-  }
-}
+//       b->image = ((imageint) IMGMAX << IMG2BITS) | ((imageint) IMGMAX << IMGBITS) | IMGMAX;
+//       b->ilocal = i;
+//       nlocal_body++;
+//     }
+//   }
+// }
 
 /* ----------------------------------------------------------------------
    pack values in local atom-based arrays for exchange with another proc

@@ -657,10 +657,7 @@ void FixRigidAbrade::init()
       error->all(FLERR, "Variable for fix rigid/abrade is invalid style");
   }
 
-  // warn if body properties are read from inpfile or a mol template file
-  //   and the gravity keyword is not set and a gravity fix exists
-  // this could mean body particles are overlapped
-  //   and gravity is not applied correctly
+  // warn if fix gravity is used without direct reference through the gravity keyword
 
   if (!id_gravity) {
     if (modify->get_fix_by_style("^gravity").size() > 0)

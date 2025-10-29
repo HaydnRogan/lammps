@@ -100,7 +100,6 @@ void FixLimit::end_of_step()
  for (int i = 0; i < nlocal; i++){
     if (!(mask[i] & groupbit)) continue;
         
-      // if a force was acting last timestep but isnt now we can reset the position
       if (MathExtra::len3(v[i]) > upper_v) {
          v[i][0] = v[i][0] / (MathExtra::len3(v[i])/upper_v);
          v[i][1] = v[i][1] / (MathExtra::len3(v[i])/upper_v);

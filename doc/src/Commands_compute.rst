@@ -115,6 +115,7 @@ KOKKOS, o = OPENMP, t = OPT.
    * :doc:`reduce/region <compute_reduce>`
    * :doc:`rheo/property/atom <compute_rheo_property_atom>`
    * :doc:`rigid/local <compute_rigid_local>`
+   * :doc:`rigid/local_abrade <compute_rigid_local_abrade>`
    * :doc:`saed <compute_saed>`
    * :doc:`slcsa/atom <compute_slcsa_atom>`
    * :doc:`slice <compute_slice>`

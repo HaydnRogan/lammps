@@ -79,9 +79,9 @@ Description
 
 As an extension of the :doc:`fix rigid/small <fix_rigid>` style, the *rigid/abrade* style treats triangulated hollow closed surfaces, comprised of discrete spherical atoms, 
 as independent abradable bodies. The spherical atoms describing the surface form the nodes of a triangulated mesh, providing well-defined local areas
-and normals. Following an impact exceeding a material hardness :ref:`(Capozza) <Capozza>`, spheres are displaced inwards along these normals. The
-result is a reduction in volume and a permanent change in particle shape. Each abraded particle’s moment of inertia is then recomputed through the triangulation and used to
-resolve future rigid-body dynamics. In this way, particle-level changes in shape are communicated up to the system’s bulk dynamics, which in turn informs
+and normals. Following an impact exceeding a material hardness :ref:`(Capozza) <Capozza_fix>`, spheres are displaced inwards along these normals. The
+result is a reduction in volume and a permanent change in particle shape. Each abraded particle's moment of inertia is then recomputed through the triangulation and used to
+resolve future rigid-body dynamics. In this way, particle-level changes in shape are communicated up to the system's bulk dynamics, which in turn informs
 subsequent abrasion. Unless otherwise stated, the guidance, restrictions, and underlying rigid-body functionality are unchanged from the *rigid/small* style. The
 listed optional keywords also largely comprise those supported by the *rigid/small* style. Detailed descriptions are reserved for features which deviate from the original *rigid/small* style.
 
@@ -111,7 +111,7 @@ will be assigned as the owning atom, store the respective body's information, an
 
 Rigid-body properties are calculated through the triangulation defined about the surface atom's positions. Each facet is 
 stored in the :doc:`angles <angles>` data structure and connected to a common origin to form a series of tetrahedra. From these tetrahedra, the volume, mass, and 
-inertia of the filled particles are calculated :ref:`(Tonon) <Tonon>` and used to resolve the rigid-body dynamics.
+inertia of the filled particles are calculated using explicit equations from :ref:`(Tonon) <Tonon>` and used to resolve the rigid-body dynamics.
 
 .. note::
 
@@ -121,7 +121,7 @@ To abrade the surface of a particle, pairwise forces are computed for each surfa
 *rigid/small* style. For *rigid/abrade*, these forces are further decomposed into normal and shear stresses by considering 
 their associated surface normals and areas calculated through the triangulation. The imposed normal stress is compared against
 the *normal_hardness*, and the shear stress is compared against the product of the *normal_hardness* and 
-*hardness_ratio*. If either hardness is exceeded, then abrasion is initiated and an abrasion velocity is calculated for the respective surface atom :ref:`(Capozza) <Capozza>`. Surface atoms are integrated by their abrasion velocity inwards along their associated normals in their body coordinate systems. 
+*hardness_ratio*. If either hardness is exceeded, then abrasion is initiated and an abrasion velocity is calculated for the respective surface atom :ref:`(Capozza) <Capozza_fix>`. Surface atoms are integrated by their abrasion velocity inwards along their associated normals in their body coordinate systems. 
 This permanently alters the particle shape and triangulation. Following any change in shape, the rigid-body properties for abraded particles are recomputed with respect to their updated triangulations. 
 
 .. note::
@@ -194,7 +194,7 @@ or :doc:`fix pour <fix_pour>`. The *mol* optional keyword from the *rigid/small*
 
 Related commands
 """"""""""""""""
-:doc:`fix_rigid <fix_rigid>`
+:doc:`fix_rigid <fix_rigid>`, :doc:`rigid/local_abrade <compute_rigid_local_abrade>`
 
 Default
 """""""
@@ -203,7 +203,8 @@ none
 
 ----------
 
-.. _Capozza:
+
+.. _Capozza_fix:
 
 **(Capozza)** R. Capozza, K. J. Hanley, A comprehensive model of plastic wear based on the discrete element method, Powder Technol, 410, 117864 (2022).
 

@@ -229,6 +229,12 @@ Bibliography
 **(Caro)**
    A Caro, DA Crowson, M Caro; Phys Rev Lett, 95, 075702 (2005)
 
+**(Capozza)** 
+   R.\ Capozza, K. J. Hanley, A comprehensive model of plastic wear based on the discrete element method, Powder Technol, 410, 117864 (2022).
+
+**(Capozza)** 
+   R.\ Capozza, K. J. Hanley, A comprehensive model of plastic wear based on the discrete element method, Powder Technol, 410, 117864 (2022).
+
 **(CasP)**
    CasP webpage: http://www.casp-program.org/
 
@@ -1484,6 +1490,9 @@ Bibliography
 
 **(Todd)**
    B.\  D. Todd, Denis J. Evans, and Peter J. Daivis: "Pressure tensor for inhomogeneous fluids", Phys. Rev. E 52, 1627 (1995).
+
+**(Tonon)** 
+   F.\ Tonon, Explicit Exact Formulas for the 3-D Tetrahedron Inertia Tensor in Terms of its Vertex Coordinates, J. Math. Stat, 1 (2004).
 
 **(Toukmaji)**
    Toukmaji, Sagui, Board, and Darden, J Chem Phys, 113, 10913 (2000).

@@ -928,7 +928,7 @@ Related commands
 """"""""""""""""
 
 :doc:`delete_bonds <delete_bonds>`, :doc:`neigh_modify <neigh_modify>`
-exclude, :doc:`fix shake <fix_shake>`
+exclude, :doc:`fix shake <fix_shake>`, :doc:`rigid/abrade <fix_rigid_abrade>`
 
 Default
 """""""

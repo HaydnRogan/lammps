@@ -1,4 +1,4 @@
-.. index:: fix wall/gran/region
+.. index:: fix limit
 
 fix wall/gran/region command
 ============================

@@ -82,7 +82,7 @@ The *surface_area* is the sum of associated areas for all atoms in the body.
 
 The *abraded_volume* is the total abraded volume removed from the body. This cumulative value can be preserved between simulations through the use of the optional *infile* keyword in the :doc:`rigid/abrade <fix_rigid_abrade>` command.
 
-The *wear_energy* is the total energy dissipated to displace surface atoms inwards along their normals. The energy dissipated to displace a surface atom :math:`i` is adapted from :ref:`(Capozza) <Capozza>` as,
+The *wear_energy* is the total energy dissipated to displace surface atoms inwards along their normals. The energy dissipated to displace a surface atom :math:`i` is adapted from :ref:`(Capozza) <Capozza_compute>` as,
 
 .. math::
 
@@ -139,6 +139,8 @@ Default
 
 none
 
-.. _Capozza:
+----------
+
+.. _Capozza_compute:
 
 **(Capozza)** R. Capozza, K. J. Hanley, A comprehensive model of plastic wear based on the discrete element method, Powder Technol, 410, 117864 (2022).

@@ -101,6 +101,7 @@ OPT.
    * :doc:`lb/fluid <fix_lb_fluid>`
    * :doc:`lb/momentum <fix_lb_momentum>`
    * :doc:`lb/viscous <fix_lb_viscous>`
+   * :doc:`limit <fix_limit>`
    * :doc:`lineforce <fix_lineforce>`
    * :doc:`manifoldforce <fix_manifoldforce>`
    * :doc:`mdi/qm <fix_mdi_qm>`
@@ -218,6 +219,7 @@ OPT.
    * :doc:`rigid/nvt (o) <fix_rigid>`
    * :doc:`rigid/nvt/small <fix_rigid>`
    * :doc:`rigid/small (o) <fix_rigid>`
+   * :doc:`rigid/abrade <fix_rigid_abrade>`
    * :doc:`rx (k) <fix_rx>`
    * :doc:`saed/vtk <fix_saed_vtk>`
    * :doc:`set <fix_set>`

@@ -279,6 +279,7 @@ accelerated styles exist.
 * :doc:`lb/fluid <fix_lb_fluid>` - lattice-Boltzmann fluid on a uniform mesh
 * :doc:`lb/momentum <fix_lb_momentum>` - :doc:`fix momentum <fix_momentum>` replacement for use with a lattice-Boltzmann fluid
 * :doc:`lb/viscous <fix_lb_viscous>` - :doc:`fix viscous <fix_viscous>` replacement for use with a lattice-Boltzmann fluid
+* :doc:`limit <fix_limit>` - constrain atoms below a given velocity magnitude
 * :doc:`lineforce <fix_lineforce>` - constrain atoms to move in a line
 * :doc:`lambda_thermostat/apip <fix_lambda_thermostat_apip>` - apply energy conserving correction for an :doc:`APIP potential <Howto_apip>`
 * :doc:`manifoldforce <fix_manifoldforce>` - restrain atoms to a manifold during minimization
@@ -397,6 +398,7 @@ accelerated styles exist.
 * :doc:`rigid/nvt <fix_rigid>` - constrain one or more clusters of atoms to move as a rigid body with NVT integration
 * :doc:`rigid/nvt/small <fix_rigid>` - constrain many small clusters of atoms to move as a rigid body with NVT integration
 * :doc:`rigid/small <fix_rigid>` - constrain many small clusters of atoms to move as a rigid body with NVE integration
+* :doc:`rigid/abrade <fix_rigid_abrade>` - constrain one or more hollow clusters of atoms to move as permanently deformable rigid bodies with NVE integration
 * :doc:`rx <fix_rx>` - solve reaction kinetic ODEs for a defined reaction set
 * :doc:`saed/vtk <fix_saed_vtk>` - time-average the intensities from :doc:`compute saed <compute_saed>`
 * :doc:`set <fix_set>` - reset an atom property via an atom-style variable every N steps

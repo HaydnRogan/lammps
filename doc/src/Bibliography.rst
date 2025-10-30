@@ -232,9 +232,6 @@ Bibliography
 **(Capozza)** 
    R.\ Capozza, K. J. Hanley, A comprehensive model of plastic wear based on the discrete element method, Powder Technol, 410, 117864 (2022).
 
-**(Capozza)** 
-   R.\ Capozza, K. J. Hanley, A comprehensive model of plastic wear based on the discrete element method, Powder Technol, 410, 117864 (2022).
-
 **(CasP)**
    CasP webpage: http://www.casp-program.org/
 

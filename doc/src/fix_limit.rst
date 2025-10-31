@@ -1,7 +1,7 @@
 .. index:: fix limit
 
-fix wall/gran/region command
-============================
+fix limit command
+=================
 
 Syntax
 """"""
